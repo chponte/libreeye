@@ -1,0 +1,20 @@
+# URL of the IP camera stream
+camera: rtsp://ip:port/path
+# Storage options
+storage:
+  # Local storage options
+  local:
+    # Path in which to store all recordings
+    path: /mnt/drive
+    # Duration of each recording, in minutes
+    segment_length: 30
+    # Days to keep the recordings
+    days: 30
+# Logging options
+log:
+  # Name of the log file
+  file: camera.log
+  # Print logs on console as well
+  console: true
+  # Level of the log messages (debug or info)
+  level: info

@@ -14,6 +14,7 @@ RUN set -ex && \
         build-essential \
         cmake \
         git-core \
+        fonts-liberation \
         libass-dev \
         libfreetype6-dev \
         libtool \
@@ -41,24 +42,26 @@ RUN set -ex && \
     tar -xf ffmpeg.tar.xz -C /usr/src/ffmpeg --strip 1 && \
     rm ffmpeg.tar.xz && \
     cd /usr/src/ffmpeg && \
-    ./configure \
-        --pkg-config-flags="--static" \
+    PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" ./configure \
+        --pkg-config-flags='--static' \
         --extra-libs="-lpthread -lm" \
         --enable-gpl \
 #        --enable-libaom \
 #        --enable-libass \
 #        --enable-libfdk-aac \
-#        --enable-libfreetype \
+        --enable-libfreetype \
+        --enable-libfontconfig \
+        --enable-libfribidi \
 #        --enable-libmp3lame \
 #        --enable-libopus \
 #        --enable-libvorbis \
-#        --enable-libvpx \
         --enable-libx264 \
 #        --enable-libx265 \
         --enable-nonfree && \
     make && \
-    make install
-
+    make install && \
+    cd && \
+    rm -r /usr/src
 
 WORKDIR /surveillance
 
