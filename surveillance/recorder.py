@@ -38,7 +38,7 @@ class CameraRecorder:
         )
 
         while not self._interrupt:
-            # error = process.stderr.
+            logger.debug('camera %d: frame block iteration', id(self))
             size = self._framebuffer_size * width * height * 3
             in_bytes = self._subprocess.stdout.read(size)
             if not in_bytes:
@@ -46,6 +46,7 @@ class CameraRecorder:
                 break
             frames = np.frombuffer(in_bytes, np.uint8).reshape([self._framebuffer_size, height, width, 3])
             for sink in self._sinks:
+                logger.debug('camera %d: call to %s write', id(self), type(sink))
                 sink.write(frames)
 
         logger.debug('camera %d: stopping ffmpeg subprocess', id(self))

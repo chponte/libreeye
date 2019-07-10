@@ -1,7 +1,7 @@
 import logging
 import signal
 from surveillance.recorder import CameraRecorder
-from surveillance.sink import Sink, FileSink
+from surveillance.sink import Sink, FileSink, AWSBucketSink
 import sys
 from typing import Dict, List, Union
 import yaml
@@ -25,6 +25,8 @@ def configure_sinks(conf: Dict[str, dict]) -> List['Sink']:
     sinks: List['Sink'] = []
     if 'local' in conf:
         sinks.append(FileSink(conf['local']))
+    if 'aws' in conf:
+        sinks.append(AWSBucketSink(conf['aws']))
     return sinks
 
 
