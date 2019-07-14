@@ -23,7 +23,8 @@ RUN set -ex && \
         texinfo \
         wget \
         zlib1g-dev \
-        libx264-dev && \
+        libx264-dev \
+        libvpx-dev && \
     # NASM version ≥ 2.13 not available in repo, build from source
     mkdir -p /usr/src/nasm && \
     wget -O nasm.tar.xz -q https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.xz && \
@@ -57,6 +58,7 @@ RUN set -ex && \
 #        --enable-libvorbis \
         --enable-libx264 \
 #        --enable-libx265 \
+        --enable-libvpx \
         --enable-nonfree && \
     make && \
     make install && \

@@ -3,21 +3,21 @@ recorder:
   # URL of the IP camera stream
   camera: 'rtsp://192.168.0.123:554/user=admin&password=&channel=1&stream=0.sdp?real_stream'
   # Timeout, in seconds, to wait for frames from the camera before attempting to reconnect
-  timeout: 30
+  timeout: 120
+  # Duration of each recording, in minutes
+  segment_length: 15
+  # Number of bytes to buffer before passing them into the sinks
+  buffer_size: 1
   # Reconnection attempts
   reconnect_attempts: 3
   # Base delay between reconnection attempts in seconds. The delay grows exponentially between successive attempts.
   reconnect_base_delay: 10
-  # Number of frames to buffer before passing them into the sinks
-  buffer_size: 10
 # Storage options
 storage:
   # Local storage options
   local:
     # Path in which to store all recordings
     path: /mnt/drive
-    # Duration of each recording, in minutes
-    segment_length: 30
     # Days to keep the recordings
     days: 30
   # AWS S3 storage options
@@ -33,8 +33,6 @@ storage:
     bucket: my_bucket
     # Path in which to store all recordings
     path: example_camera/
-    # Duration of each recording, in minutes
-    segment_length: 30
     # Days to keep the recordings
     days: 10
 # Logging options

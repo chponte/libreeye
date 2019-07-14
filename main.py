@@ -56,7 +56,8 @@ def main():
     # Configure sinks
     recorder.add_sinks(configure_sinks(config['storage']))
     try:
-        recorder.start()
+        recorder.run()
+        logger.debug('run finished successfully')
     except OSError as err:
         logger.error(err.args[1])
         exit(err.errno)

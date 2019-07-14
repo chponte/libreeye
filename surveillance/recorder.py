@@ -2,7 +2,6 @@ import errno
 import ffmpeg
 import io
 import logging
-import numpy as np
 import queue
 import re
 import subprocess
@@ -16,25 +15,49 @@ _logger = logging.getLogger(__name__)
 
 
 class CameraRecorder:
-    class _BlockReaderThread(Thread):
-        def __init__(self, stream: 'io.BufferedReader', block_size: int, q: 'queue.Queue'):
+    class _OutReaderThread(Thread):
+        def __init__(self, stream: 'io.BufferedReader', block_size: int, sinks: List['Sink'],
+                     error_queue: 'queue.Queue'):
             super().__init__()
             self._stream = stream
             self._block_size = block_size
-            self._queue = q
+            self._sinks = sinks
+            self._error_queue = error_queue
 
         def run(self) -> None:
-            while True:
-                b = self._stream.read(self._block_size)
-                if self._stream.closed or len(b) == 0:
-                    break
-                self._queue.put(b)
+            try:
+                while True:
+                    block = self._stream.read(self._block_size)
+                    if self._stream.closed or len(block) == 0:
+                        break
+                    for sink in self._sinks:
+                        if sink.is_opened():
+                            sink.write(block)
+            except OSError as err:
+                self._error_queue.put(err)
+            print('recorder stdout thread finished')
 
-    class _LineReaderThread(Thread):
+    class _ErrReaderThread(Thread):
         def __init__(self, stream: 'io.BufferedReader', q: 'queue.Queue'):
             super().__init__()
             self._stream = stream
             self._queue = q
+
+        @staticmethod
+        def _parse_error_msg(msg: str) -> Exception:
+            _logger.debug(msg)
+            # Check for TCP error
+            #   > [tcp @ 0x563bcc796c80] Connection to tcp://192.168.0.123:554?timeout=5000000 failed: No route to host
+            m = re.match(r'^\[tcp @ [a-z0-9]+\] ([^\n]+)$', msg)
+            if m is not None:
+                return ConnectionRefusedError(errno.EHOSTUNREACH, m[1])
+            # Check for RSTP connection reset
+            #   > [rtsp @ 0x5654b71fb580] CSeq 11 expected, 0 received.
+            m = re.match(r'^\[rtsp @ [a-z0-9]+\] CSeq (\d+) expected, (\d+) received\.$', msg)
+            if m is not None:
+                return ConnectionResetError(errno.ECONNRESET, f'CSeq {m[1]} expected, {m[2]} received.')
+            # If no other check applies, raise a general warning
+            return RuntimeWarning(msg)
 
         def run(self) -> None:
             line = ''
@@ -48,86 +71,73 @@ class CameraRecorder:
                     line += c
                     continue
                 # If the character is a break line, put the line onto the queue and clear the buffer
-                self._queue.put(line)
+                err = self._parse_error_msg(line)
+                self._queue.put(err)
                 line = ''
 
     def __init__(self, conf: Dict[str, str]):
         # Configuration attributes
         self._url = conf['camera']
         self._timeout = int(conf['timeout'])
+        self._length = int(conf['segment_length']) * 60
+        self._buffer_size = int(conf['buffer_size']) * 2 ** 20
         self._reconnect_attempts = int(conf['reconnect_attempts'])
         self._reconnect_delay = int(conf['reconnect_base_delay'])
-        self._buffer_size = int(conf['buffer_size'])
         # Internal attributes
         self._sinks: List['Sink'] = []
         self._interrupt = False
         self._ffmpeg_stream: Union['None', 'subprocess.Popen'] = None
-        self._ffmpeg_block_iterator = None
         self._stdout_reader_thread: Union['None', 'Thread'] = None
-        self._stdout_queue: Union['None', 'queue.Queue'] = None
         self._stderr_reader_thread: Union['None', 'Thread'] = None
-        self._stderr_queue: Union['None', 'queue.Queue'] = None
+        self._error_queue: Union['None', 'queue.Queue'] = None
+        self._gm_offset = time.mktime(time.localtime(0)) - time.mktime(time.gmtime(0))
 
-    @staticmethod
-    def _parse_error_msg(msg: str) -> None:
-        _logger.debug(msg)
-        # Check for TCP error
-        #   > [tcp @ 0x563bcc796c80] Connection to tcp://192.168.0.123:554?timeout=5000000 failed: No route to host
-        m = re.match(r'^\[tcp @ [a-z0-9]+\] ([^\n]+)$', msg)
-        if m is not None:
-            raise ConnectionRefusedError(errno.EHOSTUNREACH, m[1])
-        # Check for RSTP connection reset
-        #   > [rtsp @ 0x5654b71fb580] CSeq 11 expected, 0 received.
-        m = re.match(r'^\[rtsp @ [a-z0-9]+\] CSeq (\d+) expected, (\d+) received\.$', msg)
-        if m is not None:
-            raise ConnectionResetError(errno.ECONNRESET, f'CSeq {m[1]} expected, {m[2]} received.')
-        # If no other check applies, raise a general warning
-        warnings.warn(msg, RuntimeWarning)
-
-    def _probe_camera(self):
-        # Probe camera
-        try:
-            probe = ffmpeg.probe(self._url)
-        except ffmpeg.Error as err:
-            for line in err.stderr.decode().strip().split('\n'):
-                self._parse_error_msg(line)
-            return
-        # format = probe['format']
-        # _logger.debug('probe format: %s', format)
-        # Check number of streams
-        if len(probe['streams']) != 1:
-            raise NotImplementedError(
-                errno.EBADMSG, f'ffprobe returned an unsupported number of streams ({len(probe["streams"])})'
-            )
-        video_info = probe['streams'][0]
-        _logger.debug(video_info)
-        if video_info['width'] == 0 or video_info['height'] == 0:
-            raise ValueError(errno.EBADMSG, 'ffprobe returned multiple empty fields')
-        if re.match(r'^\d+/0$', video_info['avg_frame_rate']):
-            raise ValueError(
-                errno.EBADMSG, f'ffprobe returned an invalid avg_frame_rate ({video_info["avg_frame_rate"]})'
-            )
-        return video_info
-
-    def _open_ffmpeg_stream(self, block_size: int):
+    def _open_ffmpeg_stream(self):
         # Check if FFmpeg stream is already opened
         if self._ffmpeg_stream is not None:
             return
-
+        # Open FFmpeg subprocess
         self._ffmpeg_stream = (
             ffmpeg
-            .input(self._url, rtsp_transport='tcp', v='warning')
-            .output('pipe:', format='rawvideo', pix_fmt='rgb24')
+            .input(self._url, rtsp_transport='tcp', stimeout=self._timeout * 10 ** 3, v='warning')
+            .filter(
+                'drawtext',
+                text="%{localtime:%d/%m/%y %H\:%M\:%S}",
+                expansion='normal',
+                font='LiberationMono',
+                fontsize=21,
+                fontcolor='white',
+                shadowx=1,
+                shadowy=1
+            )
+            .output('pipe:', format='matroska', vcodec='libvpx-vp9')
             .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
         )
-
-        self._stdout_queue = queue.Queue()
-        self._stdout_reader_thread = self._BlockReaderThread(self._ffmpeg_stream.stdout, block_size, self._stdout_queue)
-        self._stdout_reader_thread.start()
-        self._stderr_queue = queue.Queue()
-        self._stderr_reader_thread = self._LineReaderThread(self._ffmpeg_stream.stderr, self._stderr_queue)
+        # Create error reader thread
+        print('create error reader thread')
+        self._error_queue = queue.Queue()
+        self._stderr_reader_thread = self._ErrReaderThread(self._ffmpeg_stream.stderr, self._error_queue)
         self._stderr_reader_thread.start()
-        self._ffmpeg_block_iterator = self._block_loop_iterator()
+        # Wait for the first byte to be returned or the subprocess to die (and thus the error thread to queue the error)
+        print('wait for first byte')
+        self._ffmpeg_stream.stdout.peek(1)
+        while not self._error_queue.empty():
+            error = self._error_queue.get()
+            # If the error is a warning, do not raise any exception
+            if isinstance(error, Warning):
+                _logger.warning(str(error))
+                continue
+            # Otherwise remove invalid object references and raise the error
+            self._ffmpeg_stream.terminate()
+            self._ffmpeg_stream = None
+            self._stderr_reader_thread = None
+            raise error from None
+        # If no errors have occurred, create the output reader thread as well
+        print('create output reader thread')
+        self._stdout_reader_thread = self._OutReaderThread(
+            self._ffmpeg_stream.stdout, self._buffer_size, self._sinks, self._error_queue
+        )
+        self._stdout_reader_thread.start()
 
     def _close_ffmpeg_stream(self):
         # End FFmpeg subprocess and remove object reference
@@ -135,148 +145,102 @@ class CameraRecorder:
             self._ffmpeg_stream.stdin.write(b'q')
             self._ffmpeg_stream.stdin.close()
             self._ffmpeg_stream = None
-        # Read last thread results and remove object references
-        last_blocks = []
-        self._stdout_reader_thread.join(timeout=5)
-        if not self._stdout_reader_thread.is_alive():
-            while not self._stdout_queue.empty():
-                last_blocks.append(self._stdout_queue.get())
-        else:
-            _logger.debug('stdout thread alive, ignoring last blocks')
-        self._stdout_reader_thread = None
-        self._stdout_queue = None
-        self._stderr_reader_thread.join(timeout=5)
-        if not self._stderr_reader_thread.is_alive():
-            while not self._stderr_queue.empty():
-                self._parse_error_msg(self._stderr_queue.get())
-        else:
-            _logger.debug('stderr thread alive, ignoring last blocks')
-        self._stderr_reader_thread = None
-        self._stderr_queue = None
-        self._ffmpeg_block_iterator = None
-        return last_blocks
 
-    def _block_loop_iterator(self):
-        last_block_epoch = time.time()
-        while not self._interrupt:
-            try:
-                # Read block from stdout queue
-                block = self._stdout_queue.get(block=True, timeout=1)
-                last_block_epoch = time.time()
-                yield block
-            except queue.Empty:
-                # If get() timeout is reached, check for errors
-                while not self._stderr_queue.empty():
-                    self._parse_error_msg(self._stderr_queue.get())
-                # If stderr queue is empty, check cumulative timeout
-                if time.time() - last_block_epoch > self._timeout:
-                    self._close_ffmpeg_stream()
-                    raise TimeoutError(errno.ETIMEDOUT, 'FFmpeg read timeout reached')
+    def _join_reader_threads(self, timeout: int) -> None:
+        # Read last thread results and remove object references
+        self._stdout_reader_thread.join(timeout=timeout)
+        if self._stdout_reader_thread.is_alive():
+            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached when joining stdout reader thread')
+        self._stdout_reader_thread = None
+        self._stderr_reader_thread.join(timeout=timeout)
+        if self._stderr_reader_thread.is_alive():
+            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached when joining stderr reader thread')
+        self._stderr_reader_thread = None
 
     def add_sinks(self, sinks: List['Sink']):
         self._sinks.extend(sinks)
 
-    def start(self):
+    def run(self):
         self._interrupt = False
         attempts = self._reconnect_attempts
         error_wait_time = self._reconnect_delay
-        video_info = None
         while not self._interrupt:
-            if video_info is None:
-                # Probe the camera to obtain its video format
-                try:
-                    video_info = self._probe_camera()
-                except ValueError as err:
-                    _logger.warning(str(err))
-                    continue
-                except OSError:
-                    attempts -= 1
-                    if attempts == 0:
-                        raise
-                    time.sleep(error_wait_time)
-                    error_wait_time *= 2
-                    continue
-            width, height = int(video_info['width']), int(video_info['height'])
-            frame_size = width * height * 3
             # Prepare sinks
-            sinks_with_errors = False
+            print('prepare sinks')
             for sink in self._sinks:
                 try:
-                    sink.open(video_info)
+                    sink.open('mkv')
                 except OSError as err:
-                    sinks_with_errors = True
                     warnings.warn(str(err), RuntimeWarning)
             # If no sinks are available, terminate execution
             if all([not sink.is_opened() for sink in self._sinks]):
+                print('no sinks available')
                 attempts -= 1
                 if attempts == 0:
                     raise RuntimeError()
                 time.sleep(error_wait_time)
                 error_wait_time *= 2
                 continue
-            # If this point is reached, at least one Sink is available for writing frames, so error count and timeout
-            # should be restarted
+            # Open FFmpeg process and launch reader threads
+            print('open ffmpeg')
+            try:
+                self._open_ffmpeg_stream()
+            except OSError as err:
+                attempts -= 1
+                if attempts == 0:
+                    raise RuntimeError()
+                warnings.warn(str(err))
+                time.sleep(error_wait_time)
+                error_wait_time *= 2
+                continue
+            # If this point is reached then at least one Sink is available and the FFmpeg subprocess could be opened,
+            # so error count and sleep time can be reset
             attempts = self._reconnect_attempts
             error_wait_time = self._reconnect_delay
-            # Create FFmpeg reader process and handler threads
-            self._open_ffmpeg_stream(frame_size * self._buffer_size)
-            # Iterate differently depending if some sinks could not be opened
+            # Consume video stream until segment is finished
+            print('consume video')
             try:
-                # If some sink is unavailable, iterate 1000 blocks, try to reopen it and reenter main loop
-                if sinks_with_errors:
-                    i = 1000
-                    while i > 0:
-                        byte_block = next(self._ffmpeg_block_iterator)
-                        frames = (
-                            np
-                            .frombuffer(byte_block, np.uint8)
-                            .reshape([len(byte_block) // frame_size, height, width, 3])
-                        )
-                        for sink in self._sinks:
-                            if sink.is_opened():
-                                sink.write(frames)
-                # Else iterate until an exception occurs or stop() is called
-                else:
-                    while True:
-                        byte_block = next(self._ffmpeg_block_iterator)
-                        frames = (
-                            np
-                            .frombuffer(byte_block, np.uint8)
-                            .reshape([len(byte_block) // frame_size, height, width, 3])
-                        )
-                        for sink in self._sinks:
-                            sink.write(frames)
-            except StopIteration:
-                pass
+                last_time = 0
+                while not self._interrupt:
+                    t = (time.time() + self._gm_offset) % self._length
+                    # Check for errors
+                    while not self._error_queue.empty():
+                        error = self._error_queue.get()
+                        # If the error is a warning, do not raise any exception
+                        if isinstance(error, Warning):
+                            _logger.warning(str(error))
+                            continue
+                        # Otherwise raise the error
+                        raise error from None
+                    # If segment has ended, exit loop
+                    if t < last_time:
+                        break
+                    last_time = t
+                    print('main loop sleep')
+                    time.sleep(1)
             except OSError as err:
-                # If an exception occurs, check again all components to see which raised the exception
-                video_info = None
-                warnings.warn(str(err), RuntimeWarning)
-                continue
-            # Close FFmpeg stream and write last frames
+                # If an error occurs during the writing loop then issue a warning, try to close all sinks and restart
+                # the main loop to reattempt the recording
+                warnings.warn(str(err))
+            # Exit FFmpeg process
+            print('exit ffmpeg')
             try:
-                last_blocks = self._close_ffmpeg_stream()
-                for byte_block in last_blocks:
-                    _logger.debug('Read %d bytes', len(byte_block))
-                    frames = (
-                        np
-                        .frombuffer(byte_block, np.uint8)
-                        .reshape([len(byte_block) // frame_size, height, width, 3])
-                    )
-                    for sink in self._sinks:
-                        sink.write(frames)
-            except OSError as err:
-                # If an error happens while writing last frames, ignore those last frames and try to end normally
-                warnings.warn(str(err), RuntimeWarning)
+                self._close_ffmpeg_stream()
+                self._join_reader_threads(30)
+            except TimeoutError as err:
+                # If the FFmpeg process is not responding, attempt to close the sinks and issue a warning before
+                # restarting the main loop
+                warnings.warn(str(err))
             # Close sinks
+            print('close sinks')
             for sink in self._sinks:
-                try:
-                    sink.close()
-                except OSError as err:
-                    _logger.error('Error occurred while closing sink: %s', str(err))
-                    pass
-        _logger.debug('loop finished')
+                if sink.is_opened():
+                    try:
+                        sink.close()
+                    except OSError as err:
+                        _logger.error('Error occurred while closing sink: %s', str(err))
 
     def stop(self):
         _logger.debug('stop called')
+        self._close_ffmpeg_stream()
         self._interrupt = True

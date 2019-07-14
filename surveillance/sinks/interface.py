@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 class Sink(ABC):
     @abstractmethod
-    def open(self, video_info: Dict[str, Any]):
+    def open(self, ext: str) -> None:
         pass
 
     @abstractmethod
@@ -12,9 +12,9 @@ class Sink(ABC):
         pass
 
     @abstractmethod
-    def write(self, data: bytes):
+    def write(self, data: bytes) -> None:
         pass
 
     @abstractmethod
-    def close(self):
+    def close(self) -> None:
         pass
