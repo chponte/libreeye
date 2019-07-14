@@ -1,7 +1,8 @@
 import logging
 import signal
 from surveillance.recorder import CameraRecorder
-from surveillance.sink import Sink, FileSink, AWSBucketSink
+from surveillance.sinks.aws_bucket import Sink, AWSBucketSink
+from surveillance.sinks.file import FileSink
 import sys
 from typing import Dict, List, Union
 import yaml
@@ -31,10 +32,10 @@ def configure_sinks(conf: Dict[str, dict]) -> List['Sink']:
 
 
 def main():
+    logger = logging.getLogger(__name__)
     recorder: Union['None', 'CameraRecorder'] = None
 
-    def handle_sigterm(signum, frame):
-        logger = logging.getLogger(__name__)
+    def handle_sigterm(signum, _):
         logger.info('received signal %d, interrupting execution...', signum)
         recorder.stop()
 
@@ -51,10 +52,16 @@ def main():
     # Configure logger
     if 'log' in config:
         configure_logging(config['log'])
-    recorder = CameraRecorder(config['camera'])
+    recorder = CameraRecorder(config['recorder'])
     # Configure sinks
     recorder.add_sinks(configure_sinks(config['storage']))
-    recorder.start()
+    try:
+        recorder.start()
+    except OSError as err:
+        logger.error(err.args[1])
+        exit(err.errno)
+    logger.debug('program terminated with no errors')
+    exit(0)
 
 
 if __name__ == '__main__':
