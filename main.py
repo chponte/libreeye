@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import logging
 import signal
 from surveillance.recorder import CameraRecorder
@@ -13,7 +15,7 @@ def configure_logging(conf: Dict[str, str]):
     if 'console' in conf and bool(conf['console']):
         root_logger.addHandler(logging.StreamHandler(sys.stdout))
     if 'file' in conf:
-        root_logger.addHandler(logging.StreamHandler(open(conf['file'], 'wa')))
+        root_logger.addHandler(logging.StreamHandler(open(conf['file'], 'ta')))
     if 'level' in conf and conf['level'].lower() == 'debug':
         root_logger.setLevel(logging.DEBUG)
     if 'level' in conf and conf['level'].lower() == 'info':
@@ -42,7 +44,7 @@ def main():
     signal.signal(signal.SIGTERM, handle_sigterm)
 
     # Read configuration file
-    with open('config/config.yml', 'r') as c:
+    with open(sys.argv[1], 'r') as c:
         try:
             config = yaml.safe_load(c)
         except yaml.YAMLError as exc:

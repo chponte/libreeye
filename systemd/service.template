@@ -1,0 +1,13 @@
+[Unit]
+Description=Docker container daemon for a surveillance camera
+After=network.target
+
+[Service]
+Type=simple
+Restart=on-failure
+User={USER}
+ExecStart=docker run --name {CONTAINER_NAME} -a stdout -a stderr -v {CONFIG_DIR}:/surveillance/config -v {STORAGE_DIR}:/mnt/drive -v {LOG_DIR}:/var/log/surveillance --rm {IMAGE_NAME} /surveillance/main.py /surveillance/config/{CONFIG_NAME}
+ExecStop=docker stop -t 60
+
+[Install]
+WantedBy=multi-user.target
