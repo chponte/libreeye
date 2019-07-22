@@ -151,11 +151,9 @@ class AWSBucketSink(Sink):
         self._thread.block_queue.put(byte_block)
 
     def close(self):
-        print('aws close called')
         self._thread.stop = True
         self._thread.join()
         err = self._thread.error
         self._thread = None
-        print('join finished')
         if err is not None:
             raise err

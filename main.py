@@ -48,7 +48,6 @@ def main():
         try:
             config = yaml.safe_load(c)
         except yaml.YAMLError as exc:
-            print(exc)
             exit(1)
         c.close()
     # Configure logger
