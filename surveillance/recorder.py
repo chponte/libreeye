@@ -84,11 +84,13 @@ class CameraRecorder:
     def __init__(self, conf: Dict[str, str]):
         # Configuration attributes
         self._url = conf['camera']
+        self._protocol = conf['protocol']
         self._timeout = int(conf['timeout'])
         self._length = int(conf['segment_length']) * 60
         self._buffer_size = int(conf['buffer_size']) * 2 ** 20
         self._reconnect_attempts = int(conf['reconnect_attempts'])
         self._reconnect_delay = int(conf['reconnect_base_delay'])
+        self._vp9_speed = {'low': 8, 'mid': 0, 'high': -8}[conf['vp9_encoder_quality']]
         # Internal attributes
         self._sinks: List['Sink'] = []
         self._interrupt = False
@@ -105,7 +107,7 @@ class CameraRecorder:
         # Open FFmpeg subprocess
         self._ffmpeg_stream = (
             ffmpeg
-            .input(self._url, rtsp_transport='tcp', stimeout=self._timeout * 10 ** 3, v='warning')
+            .input(self._url, rtsp_transport=self._protocol, stimeout=self._timeout * 10 ** 6, v='warning')
             .filter(
                 'drawtext',
                 text="%{localtime:%d/%m/%y %H\:%M\:%S}",
@@ -116,7 +118,7 @@ class CameraRecorder:
                 shadowx=1,
                 shadowy=1
             )
-            .output('pipe:', format='matroska', vcodec='libvpx-vp9')
+            .output('pipe:', format='matroska', vcodec='libvpx-vp9', deadline='realtime', speed=self._vp9_speed)
             .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
         )
         # Create error reader thread

@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 Restart=on-failure
 User={USER}
-ExecStart={DOCKER} run --name {CONTAINER_NAME} --user {UID} -v {CONFIG_DIR}:/surveillance/config -v {STORAGE_DIR}:/mnt/drive -v {LOG_DIR}:/var/log/surveillance --rm {IMAGE_NAME} /surveillance/main.py /surveillance/config/{CONFIG_NAME}
+ExecStart={DOCKER} run --name {CONTAINER_NAME} --user {UID} --cpus=1 -v {CONFIG_DIR}:/surveillance/config -v {STORAGE_DIR}:/mnt/drive -v {LOG_DIR}:/var/log/surveillance --rm {IMAGE_NAME} /surveillance/main.py /surveillance/config/{CONFIG_NAME}
 ExecStop={DOCKER} stop -t 60
 
 [Install]

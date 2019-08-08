@@ -1,4 +1,4 @@
-FROM python:3.7.3-stretch
+FROM python:3.7.4-stretch
 
 # FFmpeg version
 ENV NASM_VERSION 2.14.02
@@ -24,6 +24,8 @@ RUN set -ex && \
         wget \
         zlib1g-dev \
         libx264-dev \
+        libx265-dev \
+        libnuma-dev \
         libvpx-dev && \
     # NASM version ≥ 2.13 not available in repo, build from source
     mkdir -p /usr/src/nasm && \
@@ -57,7 +59,7 @@ RUN set -ex && \
 #        --enable-libopus \
 #        --enable-libvorbis \
         --enable-libx264 \
-#        --enable-libx265 \
+        --enable-libx265 \
         --enable-libvpx \
         --enable-nonfree && \
     make && \

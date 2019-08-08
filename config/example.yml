@@ -1,7 +1,9 @@
 # Recording options
 recorder:
   # URL of the IP camera stream
-  camera: 'rtsp://192.168.0.123:554/user=admin&password=&channel=1&stream=0.sdp?real_stream'
+  camera: rtsp://192.168.0.123:554/user=admin&password=&channel=1&stream=0.sdp?real_stream
+  # Protocol
+  protocol: udp
   # Timeout, in seconds, to wait for frames from the camera before attempting to reconnect
   timeout: 120
   # Duration of each recording, in minutes
@@ -12,6 +14,8 @@ recorder:
   reconnect_attempts: 3
   # Base delay between reconnection attempts in seconds. The delay grows exponentially between successive attempts.
   reconnect_base_delay: 10
+  # VP9 encoder quality (low, mid, high)
+  vp9_encoder_quality: low
 # Storage options
 storage:
   # Local storage options
