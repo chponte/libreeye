@@ -5,9 +5,9 @@ import logging
 import os
 import queue
 from surveillance.sinks.interface import Sink
-from threading import Thread
+import threading
 import time
-from typing import Dict, Union
+from typing import Dict, Union, List
 
 logging.getLogger('boto3').setLevel(logging.WARNING)
 logging.getLogger('botocore').setLevel(logging.WARNING)
@@ -17,82 +17,73 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 _logger = logging.getLogger(__name__)
 
 
-# noinspection PyUnresolvedReferences
 class AWSBucketSink(Sink):
-    # noinspection PyUnresolvedReferences
-    class _UploadThread(Thread):
-        def __init__(self, sink: 'Sink', s3: 'botocore.client.S3', bucket: str, key: str,
-                     block_queue: 'queue.Queue'):
-            super().__init__()
-            self._sink: 'Sink' = sink
-            self._s3 = s3
-            self._bucket = bucket
-            self._key = key
-            # The minimum part size, as stated in the documentation, is 5MB (except for the last one)
-            # https://docs.aws.amazon.com/AmazonS3/latest/API/mpUploadUploadPart.html
-            self._part_min_size = 5 * 2 ** 20
-            self.block_queue: 'queue.Queue' = block_queue
-            self.error: Union[None, 'Exception'] = None
-            self.stop: bool = False
+    @staticmethod
+    def _create_multiupload(s3, bucket, key, errors):
+        try:
+            mpu = s3.create_multipart_upload(Bucket=bucket, Key=key)
+            _logger.debug('Created multipart upload with id %s', mpu['UploadId'])
+            return mpu['UploadId']
+        except botocore.exceptions.BotoCoreError as err:
+            _logger.debug('Error occurred: %s', str(err))
+            errors.append(ConnectionError(errno.ECONNRESET, str(err)))
+            exit(errno.ECONNRESET)
 
-        def _create_multiupload(self):
+    @staticmethod
+    def _upload_part(s3, bucket, key, mpu, parts, buffer: bytes, errors):
             try:
-                mpu = self._s3.create_multipart_upload(Bucket=self._bucket, Key=self._key)
-                self._mpu_id = mpu['UploadId']
-                self._parts = []
-                self._num = 1
-                _logger.debug('Created multipart upload with id %s', self._mpu_id)
-            except (
-                    botocore.exceptions.ReadTimeoutError,
-                    botocore.exceptions.EndpointConnectionError
-            ) as err:
-                self.error = ConnectionError(errno.ENETUNREACH, str(err))
-                exit(errno.ENETUNREACH)
-
-        def _upload_part(self, buffer: bytes):
-            _logger.debug('Uploading part %d of length %d', self._num, len(buffer))
-            try:
-                part = self._s3.upload_part(
-                    Body=buffer, Bucket=self._bucket, Key=self._key, UploadId=self._mpu_id, PartNumber=self._num
+                num = parts[-1]['PartNumber'] + 1 if len(parts) > 0 else 1
+                _logger.debug('Uploading part %d of length %d', num, len(buffer))
+                part = s3.upload_part(
+                    Body=buffer, Bucket=bucket, Key=key, UploadId=mpu, PartNumber=num
                 )
-                self._parts.append({'PartNumber': self._num, 'ETag': part['ETag']})
-                self._num += 1
-                _logger.debug('Obtained ETag %s', self._parts[-1])
-            except (
-                    botocore.exceptions.ReadTimeoutError,
-                    botocore.exceptions.EndpointConnectionError
-            ) as err:
-                self.error = ConnectionError(errno.ETIMEDOUT, str(err))
-                exit(errno.ETIMEDOUT)
+                parts.append({'PartNumber': num, 'ETag': part['ETag']})
+                _logger.debug('Obtained ETag %s', parts[-1])
+            except botocore.exceptions.BotoCoreError as err:
+                _logger.debug('Error occurred: %s', str(err))
+                errors.append(ConnectionError(errno.ECONNRESET, str(err)))
+                exit(errno.ECONNRESET)
 
-        def _complete_upload(self):
+    @staticmethod
+    def _complete_upload(s3, bucket, key, mpu, parts, errors):
             try:
-                response = self._s3.complete_multipart_upload(
-                    Bucket=self._bucket, Key=self._key, UploadId=self._mpu_id, MultipartUpload={'Parts': self._parts}
+                response = s3.complete_multipart_upload(
+                    Bucket=bucket, Key=key, UploadId=mpu, MultipartUpload={'Parts': parts}
                 )
                 _logger.debug('Completed multipart upload for key \'%s\'', response['Key'])
-            except (
-                    botocore.exceptions.ReadTimeoutError,
-                    botocore.exceptions.EndpointConnectionError
-            ) as err:
-                self.error = ConnectionError(errno.ETIMEDOUT, str(err))
-                exit(errno.ETIMEDOUT)
+            except botocore.exceptions.BotoCoreError as err:
+                _logger.debug('Error occurred: %s', str(err))
+                errors.append(ConnectionError(errno.ECONNRESET, str(err)))
+                exit(errno.ECONNRESET)
 
-        def run(self) -> None:
-            self._create_multiupload()
-            buffer = bytes()
-            while not self.stop or not self.block_queue.empty():
-                try:
-                    block = self.block_queue.get(block=True, timeout=1)
-                    buffer += block
-                    if len(buffer) > self._part_min_size:
-                        self._upload_part(buffer)
-                        buffer = bytes()
-                except queue.Empty:
-                    pass
-            if len(buffer) > 0:
-                self._upload_part(buffer)
-            self._complete_upload()
+    @staticmethod
+    def _upload_thread_handler(s3, bucket, key: str, que: 'queue.Queue', stop: 'List[bool]', errors: 'List[Exception]'):
+        _logger.debug('Upload thread %s started', threading.current_thread().getName())
+
+        mpu = AWSBucketSink._create_multiupload(s3, bucket, key, errors)
+        parts = []
+        # Minimum part size is 5MB
+        part_min_size = 5 * 2 ** 20
+        buffer = bytes()
+        _logger.debug('Entering loop')
+        while len(stop) == 0 or not que.empty():
+            try:
+                _logger.debug('Check queue')
+                block = que.get(block=True, timeout=1)
+                _logger.debug('End check')
+                buffer += block
+                _logger.debug('Obtained block of size %d, making a total buffer size of %d', len(block), len(buffer))
+                if len(buffer) > part_min_size:
+                    AWSBucketSink._upload_part(s3, bucket, key, mpu, parts, buffer, errors)
+                    buffer = bytes()
+            except queue.Empty:
+                _logger.debug('Block queue empty, passing...')
+                pass
+        _logger.debug('Loop finished')
+        if len(buffer) > 0:
+            AWSBucketSink._upload_part(s3, bucket, key, mpu, parts, buffer, errors)
+        AWSBucketSink._complete_upload(s3, bucket, key, mpu, parts, errors)
+        _logger.debug('Upload thread %s ended', threading.current_thread().getName())
 
     def __init__(self, conf: Dict[str, str]):
         super().__init__()
@@ -104,48 +95,54 @@ class AWSBucketSink(Sink):
         self._timeout = int(conf['timeout'])
         self._s3 = None
         # Uploader thread
-        self._thread: Union['None', 'AWSBucketSink._UploadThread'] = None
-        self._thread_queue: Union[None, 'queue.Queue'] = None
-        self._thread_exception: Union['None', 'Exception'] = None
-        # Video segmentation attributes
-        self._ext = None
+        self._thread: 'threading.Thread' = None
+        self._queue: 'queue.Queue' = None
+        self._errors: 'List[Exception]' = []
+        self._stop: 'List[bool]' = []
 
     def open(self, ext: str) -> None:
         # Check if sink is already opened
         if self._thread is not None:
             return
-        # Store file extension
-        self._ext = ext
-        # Open S3 client using provided credentials
-        session = boto3.Session(
-            aws_access_key_id=self._aws_id,
-            aws_secret_access_key=self._aws_secret
-        )
-        self._s3 = session.client(
-            service_name='s3',
-            config=botocore.config.Config(
-                connect_timeout=self._timeout,
-                read_timeout=self._timeout,
-                retries={'max_attempts': 0}
-            )
-        )
-        # Check whether the bucket exists or not
+        
         try:
-            bucket_list = [b['Name'] for b in self._s3.list_buckets()['Buckets']]
-            if self._bucket not in bucket_list:
+            # Open S3 client using provided credentials
+            session = boto3.Session(
+                aws_access_key_id=self._aws_id,
+                aws_secret_access_key=self._aws_secret
+            )
+            self._s3 = session.client(
+                service_name='s3',
+                config=botocore.client.Config(
+                    connect_timeout=self._timeout,
+                    read_timeout=self._timeout,
+                    retries={'max_attempts': 0}
+                )
+            )
+            # Check whether the bucket exists or not
+            if not any([b['Name'] == self._bucket for b in self._s3.list_buckets()['Buckets']]):
                 raise FileNotFoundError(errno.ENOENT, f'There is no bucket named {self._bucket}.')
         except botocore.exceptions.ClientError as err:
             if err.response['ResponseMetadata']['HTTPStatusCode'] == 403:
-                raise PermissionError(errno.EPERM, str(err)) from None
-            raise
-        except botocore.exceptions.EndpointConnectionError as err:
-            raise ConnectionError(errno.ENETUNREACH, str(err)) from None
+                raise PermissionError(errno.EPERM, str(err)) from err
+            raise ConnectionError(errno.ECONNRESET, str(err)) from err
+        except botocore.exceptions.BotoCoreError as err:
+            raise ConnectionError(errno.ECONNRESET, str(err)) from err
         # Create upload thread
-        key = os.path.join(self._key_prefix, f'{time.strftime("%d-%m-%y %H:%M", time.localtime())}.{self._ext}')
-        _logger.debug('Opening bucket \'%s\' key \'%s\'', self._bucket, key)
-        self._thread_queue = queue.Queue()
-        self._thread = self._UploadThread(self, self._s3, self._bucket, key, self._thread_queue)
-        self._thread_exception = None
+        self._queue = queue.Queue()
+        self._errors.clear()
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._upload_thread_handler, 
+            kwargs={
+                's3': self._s3,
+                'bucket': self._bucket,
+                'key': os.path.join(self._key_prefix, f'{time.strftime("%d_%m_%y_%H_%M", time.localtime())}.{ext}'), 
+                'que': self._queue, 
+                'stop': self._stop,
+                'errors': self._errors
+            }
+        )
         self._thread.start()
 
     def is_opened(self) -> bool:
@@ -153,18 +150,18 @@ class AWSBucketSink(Sink):
 
     def write(self, byte_block: bytes):
         # Check if errors have occurred in the upload thread
-        if self._thread.error is not None:
-            raise self._thread_exception
+        if len(self._errors) > 0:
+            raise self._errors[0]
         # Put the byte block into the upload thread queue
-        self._thread.block_queue.put(byte_block)
+        self._queue.put(byte_block, block=False)
 
     def close(self):
         _logger.debug('Closing bucket \'%s\'', self._bucket)
-        self._thread.stop = True
+        self._stop.append(True)
         self._thread.join(timeout=self._timeout)
         if self._thread.is_alive():
+            self._thread = None
             raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached while waiting for multipart upload thread to finalize')
-        err = self._thread.error
         self._thread = None
-        if err is not None:
-            raise err
+        for error in self._errors:
+            raise error

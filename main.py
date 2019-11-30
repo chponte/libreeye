@@ -24,7 +24,8 @@ def configure_logging(conf: Dict[str, str]):
     }
     logging.basicConfig(
         level=levels[conf['level'].lower()],
-        format='[%(relativeCreated)012d:%(levelname).1s] %(filename)s:%(lineno)d %(message)s',
+        format='[%(asctime)s] %(filename)s:%(lineno)d %(message)s',
+        datefmt='%d/%m %H:%M:%S',
         filename=os.path.join('/var/log/surveillance', conf['file']),
         filemode='a'
     )
@@ -82,7 +83,7 @@ def main():
     recorder.add_sinks(configure_sinks(config['storage']))
     try:
         _logger.debug("Running camera recorder function")
-        recorder.run()
+        recorder.start()
     except OSError as err:
         _logger.error(err.args[1])
         exit(err.errno)

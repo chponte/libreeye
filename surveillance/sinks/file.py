@@ -21,7 +21,7 @@ class FileSink(Sink):
         if self._file is not None:
             return
         self._ext = ext
-        self._filename = os.path.join(self._path, f'{time.strftime("%d-%m-%y %H:%M", time.localtime())}.{self._ext}')
+        self._filename = os.path.join(self._path, f'{time.strftime("%d_%m_%y_%H_%M", time.localtime())}.{self._ext}')
         _logger.debug('Opening file %s', self._filename)
         self._file = open(self._filename, mode='wb')
         self._byte_count = 0
@@ -30,7 +30,7 @@ class FileSink(Sink):
         return self._file is not None
 
     def write(self, data: bytes) -> None:
-        _logger.debug('Writing bytes %d-%d into file', self._byte_count, self._byte_count + len(data) - 1)
+        #_logger.debug('Writing bytes %d-%d into file', self._byte_count, self._byte_count + len(data) - 1)
         self._byte_count += len(data)
         self._file.write(data)
 
