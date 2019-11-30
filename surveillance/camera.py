@@ -4,7 +4,8 @@ import logging
 import queue
 import subprocess
 import threading
-from typing import Dict
+import time
+from typing import Dict, List
 
 _logger = logging.getLogger(__name__)
 
@@ -23,10 +24,13 @@ class Camera:
         self._error_thread: 'threading.Thread' = None
 
     @staticmethod
-    def _stdout_handler(stream, q: 'queue.Queue'):
+    def _stdout_handler(stream, q: 'queue.Queue', started: List[bool] = None):
         _logger.debug('Thread %s handler started (stdout)', threading.current_thread().getName())
+        size = 2 ** 20  # 1MB buffer size
         try:
-            size = 256 * 2 ** 10 # 256kb buffer size
+            if started is not None:
+                stream.peek(1)
+                started[0] = True
             while True:
                 block = stream.read(size)
                 if stream.closed or len(block) == 0:
@@ -60,8 +64,13 @@ class Camera:
             ffmpeg
             .input(self._url, r=5, rtsp_transport=self._protocol, v='warning')
             .filter(
+                'scale',
+                width=1280,
+                height=720
+            )
+            .filter(
                 'drawtext',
-                text='%{localtime:%d/%m/%y %H\:%M\:%S}',
+                text='%{localtime:%d/%m/%y %H\:%M\:%S}',  # pylint: disable=anomalous-backslash-in-string
                 expansion='normal',
                 font='LiberationMono',
                 fontsize=21,
@@ -69,28 +78,37 @@ class Camera:
                 shadowx=1,
                 shadowy=1
             )
-            .output('pipe:', format='matroska', vcodec='libvpx-vp9', deadline='realtime', speed=self._vp9_speed)
+            .output('pipe:', format='matroska', vcodec='libx264', preset='fast', threads=1)
             .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
         )
 
     def start(self):
+        _logger.debug('start called')
         # Open FFmpeg subprocess
         self._ffmpeg = self._ffmpeg_init()
         self._video_queue = queue.Queue()
-        self._read_thread = threading.Thread(target=self._stdout_handler, args=(self._ffmpeg.stdout, self._video_queue))
+        self._read_thread = threading.Thread(
+            target=self._stdout_handler,
+            kwargs={'stream': self._ffmpeg.stdout, 'q': self._video_queue}
+        )
         self._read_thread.start()
         self._error_thread = threading.Thread(target=self._stderr_handler, args=(self._ffmpeg.stderr,))
         self._error_thread.start()
         self.started = True
 
     def stop(self) -> bytes:
+        _logger.debug('stop called')
         self.started = False
+        _logger.debug('writting \'q\' to ffmpeg subprocess')
         if not self._ffmpeg.stdin.closed:
             self._ffmpeg.stdin.write(b'q')
             self._ffmpeg.stdin.close()
-        self._read_thread.join()
+        _logger.debug('waiting for threads to finish')
+        self._read_thread.join(timeout=10)
+        if self._read_thread.isAlive():
+            _logger.debug('Join on read thread timed out')
         self._read_thread = None
-        self._error_thread.join()
+        # If the read thread ended, it is safe to assume that the error thread ended aswell
         self._error_thread = None
         self._ffmpeg.kill()
         self._ffmpeg = None
@@ -98,26 +116,45 @@ class Camera:
         while not self._video_queue.empty():
             block += self._video_queue.get(block=False)
         self._video_queue = None
+        _logger.debug('stop finished')
         return block
 
     def reset(self) -> bytes:
+        _logger.debug('reset called')
         self.started = False
+        # Start new ffmpeg process before ending current one
         new_ffmpeg = self._ffmpeg_init()
         new_queue = queue.Queue()
-        new_stdout_thread = threading.Thread(target=self._stdout_handler, args=(new_ffmpeg.stdout, new_queue))
+        stdout_started = [False]
+        new_stdout_thread = threading.Thread(
+            target=self._stdout_handler,
+            kwargs={'stream': new_ffmpeg.stdout, 'q': new_queue, 'started': stdout_started}
+        )
+        new_stdout_thread.start()
+        # Wait for the process to connect to the camera and start providing frames
+        timeout = time.time() + 30
+        while not stdout_started[0] and time.time() < timeout:
+            time.sleep(.25)
+        if not stdout_started[0]:
+            new_ffmpeg.kill()
+            self.stop()
+            raise TimeoutError(errno.ETIMEDOUT, 'Reached timeout while waiting for camera images')
         new_stderr_thread = threading.Thread(target=self._stderr_handler, args=(new_ffmpeg.stderr,))
-        new_ffmpeg.stdout.peek(1)
+        new_stderr_thread.start()
+        _logger.debug('new video process allocated')
+        # End previous ffmpeg process and replace object attributes with new ffmpeg instance
         block = self.stop()
         self._ffmpeg = new_ffmpeg
         self._video_queue = new_queue
         self._read_thread = new_stdout_thread
-        self._read_thread.start()
         self._error_thread = new_stderr_thread
-        self._error_thread.start()
         self.started = True
+        _logger.debug('reset finished')
+        # Return remaining bytes from last ffmpeg process
         return block
 
     def discard(self):
+        _logger.debug('discard called')
         self.started = False
         self._ffmpeg.kill()
         self._ffmpeg = None
@@ -125,6 +162,7 @@ class Camera:
         self._video_queue = None
 
     def read(self, timeout: int = None) -> bytes:
+        _logger.debug('read called')
         try:
             return self._video_queue.get(block=True, timeout=timeout)
         except queue.Empty:

@@ -40,9 +40,7 @@ class CameraRecorder:
     def _write_to_sinks(self, b):
         for sink in self._sinks_avail:
             try:
-                _logger.debug(f'Writting to sink {type(sink).__name__}')
                 sink.write(b)
-                _logger.debug(f'Write to sink {type(sink).__name__} complete')
             except OSError as err:
                 _logger.error(
                     'Error occurred with sink %s (current segment may be lost): %s', sink.__class__.__name__, str(err)
@@ -60,6 +58,7 @@ class CameraRecorder:
         self._sinks_avail.clear()
 
     def _segment_loop(self):
+        _logger.debug('Segment started')
         last_time = 0
         t = (time.time() + self._gm_offset) % self._length
         while not self._interrupt and t > last_time:

@@ -68,16 +68,13 @@ class AWSBucketSink(Sink):
         _logger.debug('Entering loop')
         while len(stop) == 0 or not que.empty():
             try:
-                _logger.debug('Check queue')
                 block = que.get(block=True, timeout=1)
-                _logger.debug('End check')
                 buffer += block
                 _logger.debug('Obtained block of size %d, making a total buffer size of %d', len(block), len(buffer))
                 if len(buffer) > part_min_size:
                     AWSBucketSink._upload_part(s3, bucket, key, mpu, parts, buffer, errors)
                     buffer = bytes()
             except queue.Empty:
-                _logger.debug('Block queue empty, passing...')
                 pass
         _logger.debug('Loop finished')
         if len(buffer) > 0:
