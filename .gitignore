@@ -1,3 +1,5 @@
 .vscode
-config/config.yml
+config/*.yml
 systemd/*.service
+systemd/*.timer
+**/__pycache__
