@@ -2,7 +2,7 @@ import logging
 import os
 from surveillance.sinks.interface import Sink
 import time
-from typing import Any, Dict, Union
+from typing import Dict
 
 _logger = logging.getLogger(__name__)
 
@@ -10,8 +10,10 @@ _logger = logging.getLogger(__name__)
 class FileSink(Sink):
     def __init__(self, conf: Dict[str, str]):
         super().__init__()
-        self._path = conf['path']
+        self._path = os.path.join('/mnt/localstorage', conf['path'])
+        os.makedirs(self._path, mode=0o750, exist_ok=True)
         self._file = None
+        self._filename = None
         self._ext = None
         self._byte_count = 0
 
@@ -19,9 +21,9 @@ class FileSink(Sink):
         if self._file is not None:
             return
         self._ext = ext
-        filename = os.path.join(self._path, f'{time.asctime(time.localtime())}.{self._ext}')
-        _logger.debug('FileSink: opening file %s', filename)
-        self._file = open(filename, mode='wb')
+        self._filename = os.path.join(self._path, f'{time.strftime("%d-%m-%y %H:%M", time.localtime())}.{self._ext}')
+        _logger.debug('Opening file %s', self._filename)
+        self._file = open(self._filename, mode='wb')
         self._byte_count = 0
 
     def is_opened(self) -> bool:
@@ -33,6 +35,7 @@ class FileSink(Sink):
         self._file.write(data)
 
     def close(self) -> None:
-        _logger.debug('FileSink: close() called')
+        _logger.debug('Closing file %s', self._filename)
         self._file.close()
         self._file = None
+        self._filename = None

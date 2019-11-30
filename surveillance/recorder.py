@@ -9,7 +9,6 @@ from threading import Thread
 import time
 from surveillance.sinks.interface import Sink
 from typing import Dict, List, Union
-import warnings
 
 _logger = logging.getLogger(__name__)
 
@@ -99,11 +98,16 @@ class CameraRecorder:
         self._stderr_reader_thread: Union['None', 'Thread'] = None
         self._error_queue: Union['None', 'queue.Queue'] = None
         self._gm_offset = time.mktime(time.localtime(0)) - time.mktime(time.gmtime(0))
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug('Camera object (%d) created with attributes:', id(self))
+            for att in dir(self):
+                _logger.debug('\t%s: %s', att, getattr(self, att))
 
     def _open_ffmpeg_stream(self):
         # Check if FFmpeg stream is already opened
         if self._ffmpeg_stream is not None:
             return
+        _logger.debug('Opening ffmpeg stream')
         # Open FFmpeg subprocess
         self._ffmpeg_stream = (
             ffmpeg
@@ -122,10 +126,12 @@ class CameraRecorder:
             .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True)
         )
         # Create error reader thread
+        _logger.debug('Creating error reading thread')
         self._error_queue = queue.Queue()
         self._stderr_reader_thread = self._ErrReaderThread(self._ffmpeg_stream.stderr, self._error_queue)
         self._stderr_reader_thread.start()
         # Wait for the first byte to be returned or the subprocess to die (and thus the error thread to queue the error)
+        _logger.debug('Peeking for first data byte')
         self._ffmpeg_stream.stdout.peek(1)
         while not self._error_queue.empty():
             error = self._error_queue.get()
@@ -139,6 +145,7 @@ class CameraRecorder:
             self._stderr_reader_thread = None
             raise error from None
         # If no errors have occurred, create the output reader thread as well
+        _logger.debug('Creating video reading thread')
         self._stdout_reader_thread = self._OutReaderThread(
             self._ffmpeg_stream.stdout, self._buffer_size, self._sinks, self._error_queue
         )
@@ -147,19 +154,22 @@ class CameraRecorder:
     def _close_ffmpeg_stream(self):
         # End FFmpeg subprocess and remove object reference
         if self._ffmpeg_stream is not None:
+            _logger.debug('Quitting FFmpeg stream')
             self._ffmpeg_stream.stdin.write(b'q')
             self._ffmpeg_stream.stdin.close()
             self._ffmpeg_stream = None
 
     def _join_reader_threads(self, timeout: int) -> None:
         # Read last thread results and remove object references
+        _logger.debug('Joining video reader thread (timeout=%d)', timeout)
         self._stdout_reader_thread.join(timeout=timeout)
         if self._stdout_reader_thread.is_alive():
-            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached when joining stdout reader thread')
+            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached while waiting for video reader thread to end')
         self._stdout_reader_thread = None
+        _logger.debug('Joining error reader thread (timeout=%d)', timeout)
         self._stderr_reader_thread.join(timeout=timeout)
         if self._stderr_reader_thread.is_alive():
-            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached when joining stderr reader thread')
+            raise TimeoutError(errno.ETIMEDOUT, 'Timeout reached while waiting for error reader thread to end')
         self._stderr_reader_thread = None
 
     def add_sinks(self, sinks: List['Sink']):
@@ -173,14 +183,17 @@ class CameraRecorder:
             # Prepare sinks
             for sink in self._sinks:
                 try:
+                    _logger.debug('Opening sink %s', sink.__class__.__name__)
                     sink.open('mkv')
                 except OSError as err:
-                    warnings.warn(str(err), RuntimeWarning)
+                    _logger.warning(str(err))
             # If no sinks are available, terminate execution
             if all([not sink.is_opened() for sink in self._sinks]):
                 attempts -= 1
                 if attempts == 0:
-                    raise RuntimeError()
+                    _logger.debug('No sinks available and no retries left')
+                    raise OSError(errno.EIO, 'No sinks could be opened')
+                _logger.warning('No sinks available, retrying %d times after %d seconds', attempts, error_wait_time)
                 time.sleep(error_wait_time)
                 error_wait_time *= 2
                 continue
@@ -190,8 +203,11 @@ class CameraRecorder:
             except OSError as err:
                 attempts -= 1
                 if attempts == 0:
-                    raise RuntimeError()
-                warnings.warn(str(err))
+                    raise err
+                _logger.warning(
+                    'An error occurred while opening the FFmpeg stream (%s), retrying %d times after %d seconds',
+                    str(err), attempts, error_wait_time
+                )
                 time.sleep(error_wait_time)
                 error_wait_time *= 2
                 continue
@@ -200,6 +216,7 @@ class CameraRecorder:
             attempts = self._reconnect_attempts
             error_wait_time = self._reconnect_delay
             # Consume video stream until segment is finished
+            _logger.debug('Entering main loop')
             try:
                 last_time = 0
                 while not self._interrupt:
@@ -221,7 +238,10 @@ class CameraRecorder:
             except OSError as err:
                 # If an error occurs during the writing loop then issue a warning, try to close all sinks and restart
                 # the main loop to reattempt the recording
-                warnings.warn(str(err))
+                _logger.warning(
+                    'An error occurred while reading the video stream (%s), exiting main loop and restarting the '
+                    'recording', str(err)
+                )
             # Exit FFmpeg process
             try:
                 self._close_ffmpeg_stream()
@@ -229,16 +249,16 @@ class CameraRecorder:
             except TimeoutError as err:
                 # If the FFmpeg process is not responding, attempt to close the sinks and issue a warning before
                 # restarting the main loop
-                warnings.warn(str(err))
+                _logger.warning(str(err))
             # Close sinks
             for sink in self._sinks:
                 if sink.is_opened():
                     try:
+                        _logger.debug('Closing sink %s', sink.__class__.__name__)
                         sink.close()
                     except OSError as err:
                         _logger.error('Error occurred while closing sink: %s', str(err))
 
     def stop(self):
-        _logger.debug('stop called')
-        self._close_ffmpeg_stream()
+        _logger.debug('Stop called')
         self._interrupt = True

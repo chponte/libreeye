@@ -20,8 +20,8 @@ recorder:
 storage:
   # Local storage options
   local:
-    # Path in which to store all recordings
-    path: /mnt/drive
+    # Path in which to store all recordings (relative to the installation path)
+    path: example_camera/
     # Days to keep the recordings
     days: 30
   # AWS S3 storage options
@@ -43,7 +43,7 @@ storage:
 log:
   # Name of the log file
   file: camera.log
-  # Print logs on console as well
-  console: true
   # Level of the log messages (debug or info)
   level: info
+  # Enable console logs for the specified level
+  console: warning

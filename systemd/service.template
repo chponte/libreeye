@@ -1,13 +1,17 @@
 [Unit]
 Description=Docker container daemon for a surveillance camera
 After=network.target
+Requires=network.target
+After=docker.service
+Requires=docker.service
 
 [Service]
 Type=simple
 Restart=on-failure
 User={USER}
-ExecStart={DOCKER} run --name {CONTAINER_NAME} --user {UID} --cpus=1 -v {CONFIG_DIR}:/surveillance/config -v {STORAGE_DIR}:/mnt/drive -v {LOG_DIR}:/var/log/surveillance --rm {IMAGE_NAME} /surveillance/main.py /surveillance/config/{CONFIG_NAME}
-ExecStop={DOCKER} stop -t 60
+ExecStartPre=-{DOCKER} kill {CONTAINER_NAME}
+ExecStart={DOCKER} run --name {CONTAINER_NAME} --user {UID} --cpus=1 -v /etc/localtime:/etc/localtime:ro -v {CONFIG_DIR}:/surveillance/config -v {STORAGE_DIR}:/mnt/localstorage -v {LOG_DIR}:/var/log/surveillance --rm {IMAGE_NAME} /surveillance/main.py /surveillance/config/{CONFIG_NAME}
+ExecStop=-{DOCKER} stop -t 60 {CONTAINER_NAME}
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
