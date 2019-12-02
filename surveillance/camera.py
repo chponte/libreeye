@@ -84,6 +84,9 @@ class Camera:
 
     def start(self):
         _logger.debug('start called')
+        if self.started:
+            _logger.debug('camera is already running')
+            raise RuntimeError('camera is already running')
         # Open FFmpeg subprocess
         self._ffmpeg = self._ffmpeg_init()
         self._video_queue = queue.Queue()
@@ -98,6 +101,9 @@ class Camera:
 
     def stop(self) -> bytes:
         _logger.debug('stop called')
+        if not self.started:
+            _logger.debug('cannot stop a non-started camera')
+            raise RuntimeError('stop called on a non-started camera')
         self.started = False
         _logger.debug('writting \'q\' to ffmpeg subprocess')
         if not self._ffmpeg.stdin.closed:
@@ -121,7 +127,9 @@ class Camera:
 
     def reset(self) -> bytes:
         _logger.debug('reset called')
-        self.started = False
+        if not self.started:
+            _logger.debug('cannot reset a non-started camera')
+            raise RuntimeError('reset called on a non-started camera')
         # Start new ffmpeg process before ending current one
         new_ffmpeg = self._ffmpeg_init()
         new_queue = queue.Queue()
@@ -148,16 +156,19 @@ class Camera:
         self._video_queue = new_queue
         self._read_thread = new_stdout_thread
         self._error_thread = new_stderr_thread
-        self.started = True
         _logger.debug('reset finished')
         # Return remaining bytes from last ffmpeg process
         return block
 
     def discard(self):
         _logger.debug('discard called')
+        if not self.started:
+            _logger.debug('nothing to discard')
+            return
         self.started = False
-        self._ffmpeg.kill()
-        self._ffmpeg = None
+        if self._ffmpeg is not None:
+            self._ffmpeg.kill()
+            self._ffmpeg = None
         self._read_thread = None
         self._video_queue = None
 
