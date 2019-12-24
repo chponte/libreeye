@@ -72,7 +72,7 @@ class CameraRecorder:
     def start(self):
         while not self._interrupt:
             try:
-                if not self._camera.started:
+                if not self._camera.has_started():
                     self._camera.start()
                 self._open_sinks()
                 self._segment_loop()
