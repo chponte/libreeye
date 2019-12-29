@@ -13,11 +13,10 @@ _stderr_thread_counter = 0
 
 
 class Camera:
-    def __init__(self, config: Dict[str, str]):
+    def __init__(self, url: str, protocol: str):
         # Configuration parameters
-        self._url = config['camera']
-        self._protocol = config['protocol']
-        self._vp9_speed = {'low': 8, 'mid': 0, 'high': -8}[config['vp9_encoder_quality']]
+        self._url = url
+        self._protocol = protocol
         # Class attributes
         self._started = False
         self._ffmpeg: 'subprocess.Popen' = None
@@ -64,7 +63,7 @@ class Camera:
     def _create_ffmpeg(self) -> 'subprocess.Popen':
         p = (
             ffmpeg
-            .input(self._url, r=5, rtsp_transport=self._protocol, v='warning')
+            .input(self._url, rtsp_transport=self._protocol, v='warning')
             .filter(
                 'scale',
                 width=1280,
@@ -108,11 +107,19 @@ class Camera:
         # If subprocess has ended prematurely
         if ffmpeg_subproc.poll() is not None:
             _logger.warning('FFmpeg process terminated prematurely')
+            errors = ffmpeg_subproc.stderr.read()
+            if errors is not None:
+                for line in errors.decode().split('\n'):
+                    _logger.warning('ffmpeg: %s', line)
             return None
         # If subprocess is running but no byte could be read
         if not stdout_started[0]:
             ffmpeg_subproc.kill()
             _logger.warning('Reached timeout while waiting for camera images')
+            errors = ffmpeg_subproc.stderr.read()
+            if errors is not None:
+                for line in errors.decode().split('\n'):
+                    _logger.warning('ffmpeg: %s', line)
             return None
         _logger.debug('First byte retrieved')
         stderr_handler_t = threading.Thread(

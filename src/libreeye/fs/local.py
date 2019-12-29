@@ -1,25 +1,23 @@
-from surveillance.fs.base import ItemStorage, Item
+from libreeye.fs.base import ItemStorage, Item
 import logging
 import os
-
 
 _logger = logging.getLogger(__name__)
 
 
 class LocalStorage(ItemStorage):
-    def __init__(self, base_path: str, config):
-        self._base_path = base_path
-        self._config = config
-        self._days = config['days']
+    def __init__(self, path, days):
+        self._path = path
+        self._days = days
 
     def get_days(self):
         return self._days
 
     def walk(self):
-        for root, dirs, files in os.walk(os.path.join(self._base_path, self._config['path'])):
+        for root, dirs, files in os.walk(self._path):
             yield (
-                LocalStorage(root, self._config),
-                [LocalStorage(os.path.join(root, d), self._config) for d in dirs],
+                LocalStorage(root, self._path),
+                [LocalStorage(os.path.join(root, d), self._days) for d in dirs],
                 [LocalItem(os.path.join(root, f)) for f in files]
             )
 

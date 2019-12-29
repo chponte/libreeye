@@ -4,7 +4,7 @@ import errno
 import logging
 import os
 import queue
-from surveillance.sinks.interface import Sink
+from libreeye.sinks.interface import Sink
 import threading
 import time
 from typing import Dict, Union, List
@@ -82,14 +82,14 @@ class AWSBucketSink(Sink):
         AWSBucketSink._complete_upload(s3, bucket, key, mpu, parts, errors)
         _logger.debug('Upload thread %s ended', threading.current_thread().getName())
 
-    def __init__(self, conf: Dict[str, str]):
+    def __init__(self, bucket, folder, timeout):
         super().__init__()
         # AWS attributes
-        self._aws_id = conf['aws_access_key_id']
-        self._aws_secret = conf['aws_secret_access_key']
-        self._bucket = conf['bucket']
-        self._key_prefix = conf['path']
-        self._timeout = int(conf['timeout'])
+        # self._aws_id = conf['aws_access_key_id']
+        # self._aws_secret = conf['aws_secret_access_key']
+        self._bucket = bucket
+        self._key_prefix = folder
+        self._timeout = timeout
         self._s3 = None
         # Uploader thread
         self._thread: 'threading.Thread' = None
@@ -105,8 +105,8 @@ class AWSBucketSink(Sink):
         try:
             # Open S3 client using provided credentials
             session = boto3.Session(
-                aws_access_key_id=self._aws_id,
-                aws_secret_access_key=self._aws_secret
+                # aws_access_key_id=self._aws_id,
+                # aws_secret_access_key=self._aws_secret
             )
             self._s3 = session.client(
                 service_name='s3',

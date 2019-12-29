@@ -1,27 +1,33 @@
+from libreeye.camera import Camera
+from libreeye.sinks.aws_bucket import AWSBucketSink
+from libreeye.sinks.interface import Sink
+from libreeye.sinks.file import FileSink
+from typing import Dict, List, Union
+import argparse
 import errno
 import logging
+import signal
+import sys
 import time
-from surveillance.camera import Camera
-from surveillance.sinks.interface import Sink
-from typing import Dict, List, Union
 
 _logger = logging.getLogger(__name__)
 
 
-class CameraRecorder:
+class Recorder:
     class _NoSinkError(Exception):
         pass
 
-    def __init__(self, conf: Dict[str, str]):
+    def __init__(self, url: str, protocol: str, segment_length: int,
+                 timeout: int):
         # Configuration attributes
-        self._length = int(conf['segment_length']) * 60
-        self._timeout = int(conf['timeout'])
+        self._length = segment_length
+        self._timeout = timeout
         # Internal attributes
         self._sinks: List['Sink'] = []
         self._sinks_avail: List['Sink'] = []
         self._interrupt = False
         self._gm_offset = time.mktime(time.localtime(0)) - time.mktime(time.gmtime(0))
-        self._camera = Camera(conf)
+        self._camera = Camera(url, protocol)
 
     def add_sinks(self, sinks: List['Sink']):
         self._sinks.extend(sinks)
@@ -69,7 +75,7 @@ class CameraRecorder:
             t = (time.time() + self._gm_offset) % self._length
         _logger.debug('Segment ended')
 
-    def start(self):
+    def run(self):
         while not self._interrupt:
             try:
                 if not self._camera.has_started():
@@ -94,3 +100,58 @@ class CameraRecorder:
     def stop(self):
         _logger.debug('Stop called')
         self._interrupt = True
+
+
+def create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    # Camera class arguments
+    parser.add_argument('--camera-url', type=str, required=True)
+    parser.add_argument('--camera-proto', choices=['tcp', 'udp'], required=True)
+    parser.add_argument('--camera-timeout', type=int, required=True)
+    parser.add_argument('--camera-length', type=int, required=True)
+    # FileSink class arguments
+    parser.add_argument('--file-path', type=str, required=True)
+    # AWSBucketSink class arguments
+    parser.add_argument('--aws-bucket', type=str, required=True)
+    parser.add_argument('--aws-folder', type=str, required=True)
+    parser.add_argument('--aws-timeout', type=int, required=True)
+    return parser
+
+
+if __name__ == '__main__':
+    # Configure logger
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='[%(asctime)s] %(filename)s:%(lineno)d %(message)s',
+        datefmt='%d/%m %H:%M:%S',
+        stream=sys.stderr
+    )
+    # Parse arguments
+    parser = create_parser()
+    args = parser.parse_args()
+    # Create recorder
+    recorder = Recorder(
+        args.camera_url,
+        args.camera_proto,
+        args.camera_length,
+        args.camera_timeout
+    )
+    # Configure signal handler to exit execution
+    def handle_sigterm(signum, _):
+        _logger.info('received signal %d, interrupting execution...', signum)
+        recorder.stop()
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    _logger.debug("Set %s function as signal %d handler", handle_sigterm.__name__, signal.SIGTERM)
+    # Create sinks
+    recorder.add_sinks([
+        FileSink(args.file_path),
+        AWSBucketSink(args.aws_bucket, args.aws_folder, args.aws_timeout)
+    ])
+    try:
+        _logger.debug("Running camera recorder function")
+        recorder.run()
+    except OSError as err:
+        _logger.error(err.args[1])
+        exit(err.errno)
+    _logger.debug('Program terminated with no errors')
+    exit(0)

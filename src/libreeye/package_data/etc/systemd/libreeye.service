@@ -1,0 +1,12 @@
+[Unit]
+Description=Libreeye daemon service
+
+[Service]
+Type=forking
+PIDFile=/run/libreeye.pid
+ExecStart=/usr/bin/env python3 -m libreeye.daemon.daemon
+ExecStop=/bin/kill -s SIGTERM $MAINPID
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
-.vscode
-config/*.yml
-systemd/*.service
-systemd/*.timer
-**/__pycache__
+.vscode/
+.virtualenv/
+**/__pycache__/
+build/
+dist/
+src/libreeye.egg-info/

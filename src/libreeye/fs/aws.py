@@ -1,45 +1,51 @@
-from surveillance.fs.base import ItemStorage, Item
+from libreeye.fs.base import ItemStorage, Item
 import boto3
 import botocore
 import logging
 import os
 
+# Disable logs from boto3 and botocore
+logging.getLogger('boto3').setLevel(logging.WARNING)
+logging.getLogger('botocore').setLevel(logging.WARNING)
+logging.getLogger('s3transfer').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+
 _logger = logging.getLogger(__name__)
+_timeout = 60
 
 
 class AWSStorage(ItemStorage):
-    def __init__(self, config):
-        self._config = config
-        # The '' argument is to add trailing slash to the path
+    def __init__(self, bucket, prefix, days):
         self._s3 = None
-        self._prefix = os.path.join(config['path'], '')
+        self._bucket = bucket
+        self._prefix = os.path.join(prefix, '')  # Add trailing slash to prefix
+        self._days = days
         self._objs = None
 
     def _retrieve_bucket_objects(self):
         if self._s3 is None:
-            session = boto3.Session(
-                aws_access_key_id=self._config['aws_access_key_id'],
-                aws_secret_access_key=self._config['aws_secret_access_key']
-            )
+            session = boto3.Session()
             self._s3 = session.client(
                 service_name='s3',
                 config=botocore.client.Config(
-                    connect_timeout=self._config['timeout'],
-                    read_timeout=self._config['timeout'],
+                    connect_timeout=_timeout,
+                    read_timeout=_timeout,
                     retries={'max_attempts': 0}
                 )
             )
-        responses = [self._s3.list_objects_v2(Bucket=self._config['bucket'], Prefix=self._config['path'])]
+        responses = [self._s3.list_objects_v2(
+            Bucket=self._bucket, Prefix=self._prefix
+        )]
         while responses[-1]['IsTruncated']:
             responses.append(self._s3.list_objects_v2(
-                Bucket=self._config['bucket'],
-                Prefix=self._config['path'],
+                Bucket=self._bucket,
+                Prefix=self._prefix,
                 ContinuationToken=responses[-1]['NextContinuationToken']
             ))
         self._objs = [c for r in responses for c in r['Contents']]
 
     def get_days(self):
-        return self._config['days']
+        return self._days
 
     def get_prefix(self):
         return self._prefix
@@ -58,7 +64,7 @@ class AWSStorage(ItemStorage):
                 continue
             # If object is immediately in this dir, it is a file
             elif '/' not in key_no_prefix:
-                files.append(AWSItem(self._config, self._s3, o))
+                files.append(AWSItem(self._s3, self._bucket, o))
             # Else it is a directory, so group them by dir name
             else:
                 d, _ = key_no_prefix.split('/', 1)
@@ -68,9 +74,8 @@ class AWSStorage(ItemStorage):
         # Translate directories into AWSDir objects
         dirs = []
         for d in abs_dirs:
-            buff = AWSStorage(self._config)
-            # The '' argument is to add trailing slash to the path
-            buff._prefix = os.path.join(self._prefix, d, '')
+            new_prefix = buff._prefix = os.path.join(self._prefix, d, '')
+            buff = AWSStorage(self._bucket, new_prefix, self._days)
             buff._objs = abs_dirs[d]
             dirs.append(buff)
         # Yield this dir subdirectories and files
@@ -82,9 +87,9 @@ class AWSStorage(ItemStorage):
 
 
 class AWSItem(Item):
-    def __init__(self, config, s3, aws_obj):
-        self._config = config
+    def __init__(self, s3, bucket, aws_obj):
         self._s3 = s3
+        self._bucket = bucket
         self._key = aws_obj['Key']
         self._lastmodified = aws_obj['LastModified']
 
@@ -96,4 +101,4 @@ class AWSItem(Item):
 
     def remove(self):
         _logger.info(f'Removing AWS object {self._key}')
-        self._s3.delete_object(Bucket=self._config['bucket'], Key=self._key)
+        self._s3.delete_object(Bucket=self._bucket, Key=self._key)

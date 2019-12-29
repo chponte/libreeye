@@ -1,6 +1,6 @@
 import logging
 import os
-from surveillance.sinks.interface import Sink
+from libreeye.sinks.interface import Sink
 import time
 from typing import Dict
 
@@ -8,10 +8,10 @@ _logger = logging.getLogger(__name__)
 
 
 class FileSink(Sink):
-    def __init__(self, conf: Dict[str, str]):
+    def __init__(self, path):
         super().__init__()
-        self._path = os.path.join('/mnt/localstorage', conf['path'])
-        os.makedirs(self._path, mode=0o750, exist_ok=True)
+        self._path = path
+        os.makedirs(self._path, mode=0o755, exist_ok=True)
         self._file = None
         self._filename = None
         self._ext = None
