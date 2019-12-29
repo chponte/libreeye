@@ -40,8 +40,6 @@ logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 _logger = logging.getLogger(__name__)
 _WATCHDOG_DELAY = 60
-_DOCKER_IMAGE_NAME = f'libreeye' \
-    f':{pkg_resources.get_distribution("libreeye").version}'
 
 
 class _ThreadingUnixRequestHandler(socketserver.BaseRequestHandler):
@@ -112,11 +110,12 @@ class Daemon():
         self._cameras = [Namespace(
             conf=c,
             state=Namespace(
-                active=False
+                active=False,
+                container_name=f'libreeye.recorder-{i}'
             )
-        ) for c in Daemon._read_cameras_config(
+        ) for i, c in enumerate(Daemon._read_cameras_config(
             '/etc/libreeye/cameras.conf'
-        )]
+        ))]
         # Read storage config
         self._storage = Daemon._read_storage_config(
             '/etc/libreeye/storage.conf'
@@ -147,7 +146,8 @@ class Daemon():
         log = gc_section.get('Log')
         gc = Namespace(
             frequency=freq,
-            log=log
+            log=log,
+            container_name='libreeye.gc'
         )
         # Build daemon Namespace
         daemon_section = config['daemon']
@@ -218,10 +218,31 @@ class Daemon():
         )
 
     @staticmethod
-    def _is_container_running(name: str) -> bool:
+    def _docker_get_image() -> docker.models.images.Image:
+        _logger.debug('_docker_get_image called')
+        docker_image_name = (
+            f'chponte/libreeye:'
+            f'{pkg_resources.get_distribution("libreeye").version}'
+        )
+        client = docker.from_env()
+        try:
+            return client.images.get(docker_image_name)
+        except docker.errors.ImageNotFound:
+            _logger.debug('docker image not found')
+            # Remove all images from previous versions
+            for image in client.images.list('chponte/libreeye:'):
+                _logger.debug('remove docker image %s', image.tags[0])
+                client.images.remove(image.id)
+            # Download image for current version
+            image = client.images.pull(docker_image_name)
+            _logger.debug('docker image %s pulled', image.tags[0])
+            return image
+
+    @staticmethod
+    def _docker_is_container_running(name: str) -> bool:
         client = docker.from_env()
         return len(client.containers.list(filters={
-            'ancestor': _DOCKER_IMAGE_NAME,
+            'ancestor': Daemon._docker_get_image().tags[0],
             'name': name
         })) > 0
 
@@ -233,8 +254,7 @@ class Daemon():
         for i, c in enumerate(self._cameras):
             if not c.state.active:
                 continue
-            docker_container_name = f'libreeye.recorder-{i}'
-            if Daemon._is_container_running(docker_container_name):
+            if Daemon._docker_is_container_running(c.state.container_name):
                 continue
             _logger.warning('active camera %i is not running, starting it '
                             'again', i)
@@ -251,35 +271,35 @@ class Daemon():
         # Run garbage collector
         self.run_garbage_collector(wait=False)
 
-    def start_camera(self, id: int):
-        _logger.debug(f'start_camera called on id %i', id)
-        camera_name = self._cameras[id].conf.name
+    def start_camera(self, cid: int):
+        _logger.debug(f'start_camera called on id %i', cid)
+        camera_name = self._cameras[cid].conf.name
         # Change camera state
-        self._cameras[id].state.active = True
+        self._cameras[cid].state.active = True
         # Check if the recorder for the camera is already running
         client = docker.from_env()
-        docker_container_name = f'libreeye.recorder-{id}'
-        if Daemon._is_container_running(docker_container_name):
+        if Daemon._docker_is_container_running(
+            self._cameras[cid].state.container_name
+        ):
             raise RuntimeError()
         # Check if log file already exists
-        if not os.path.isfile(self._cameras[id].conf.log):
-            open(self._cameras[id].conf.log, 'w').close()
+        if not os.path.isfile(self._cameras[cid].conf.log):
+            open(self._cameras[cid].conf.log, 'w').close()
         # Run container in detached mode
-        docker_video_path = '/mnt/video'
-        docker_log_file = '/var/log/container.log'
         client.containers.run(
-            _DOCKER_IMAGE_NAME,
+            Daemon._docker_get_image().id,
             '/bin/sh -c "exec python -m libreeye.recorder'  # pylint: disable=no-member
-            f' --camera-url {self._cameras[id].conf.url}'
-            f' --camera-proto {self._cameras[id].conf.protocol}'
-            f' --camera-timeout {self._cameras[id].conf.timeout}'
-            f' --camera-length {self._cameras[id].conf.segment}'
-            f' --file-path {os.path.join(docker_video_path, camera_name)}'
+            f' --camera-url {self._cameras[cid].conf.url}'
+            f' --camera-proto {self._cameras[cid].conf.protocol}'
+            f' --camera-timeout {self._cameras[cid].conf.timeout}'
+            f' --camera-length {self._cameras[cid].conf.segment}'
+            f' --file-path '
+            f'{os.path.join(self._storage.local.path, camera_name)}'
             f' --aws-bucket {self._storage.aws.bucket}'
             f' --aws-folder {camera_name}'
             f' --aws-timeout {self._storage.aws.timeout}'
-            f' >>{docker_log_file} 2>&1"',
-            name=docker_container_name,
+            f' >>{self._cameras[cid].conf.log} 2>&1"',
+            name=self._cameras[cid].state.container_name,
             detach=True,
             mounts=[
                 # Time locale configuration from host
@@ -298,14 +318,14 @@ class Daemon():
                 ),
                 # Video writting directory
                 docker.types.Mount(
-                    target=docker_video_path,
+                    target=self._storage.local.path,  # pylint: disable=no-member
                     source=self._storage.local.path,  # pylint: disable=no-member
                     type='bind'
                 ),
                 # Process log file
                 docker.types.Mount(
-                    target=docker_log_file,
-                    source=self._cameras[id].conf.log,
+                    target=self._cameras[cid].conf.log,
+                    source=self._cameras[cid].conf.log,
                     type='bind'
                 )
             ],
@@ -315,15 +335,14 @@ class Daemon():
             auto_remove=True
         )
 
-    def stop_camera(self, id: int) -> int:
-        _logger.debug('stop_camera called on id %i', id)
-        self._cameras[id].state.active = False
-        docker_container_name = f'libreeye.recorder-{id}'
+    def stop_camera(self, cid: int) -> int:
+        _logger.debug('stop_camera called on id %i', cid)
+        self._cameras[cid].state.active = False
         client = docker.from_env()
         try:
             [container] = client.containers.list(filters={
-                'ancestor': _DOCKER_IMAGE_NAME,
-                'name': docker_container_name
+                'ancestor': Daemon._docker_get_image().id,
+                'name': self._cameras[cid].state.container_name
             })
         except ValueError:
             # Container not found
@@ -344,11 +363,10 @@ class Daemon():
             cameras[i]['active'] = c.state.active
             # Read container status if camera is active
             if c.state.active:
-                docker_container_name = f'libreeye.recorder-{i}'
                 try:
                     [container] = client.containers.list(filters={
-                        'ancestor': _DOCKER_IMAGE_NAME,
-                        'name': docker_container_name
+                        'ancestor': Daemon._docker_get_image().id,
+                        'name': c.state.container_name
                     })
                     cameras[i]['status'] = container.status
                 except ValueError:
@@ -360,21 +378,17 @@ class Daemon():
         _logger.debug('run_garbage_collector called')
         # Check if garbage collector is already running
         client = docker.from_env()
-        docker_container_name = 'libreeye.gc'
-        if Daemon._is_container_running(docker_container_name):
+        if Daemon._docker_is_container_running(self._conf.gc.container_name):  # pylint: disable=no-member
             raise RuntimeError()
         # Check if log file already exists
         if not os.path.isfile(self._conf.gc.log):  # pylint: disable=no-member
             open(self._conf.gc.log, 'w').close()  # pylint: disable=no-member
         # Run container in attached mode
-        docker_video_path = '/mnt/video'
-        docker_log_file = '/var/log/container.log'
         local_args = list()
         aws_args = list()
         for c in self._cameras:
-            local_path = os.path.join(docker_video_path, c.conf.name)
-            local_exp = \
-                self._storage.local.expiration  # pylint: disable=no-member
+            local_path = os.path.join(self._storage.local.path, c.conf.name)  # pylint: disable=no-member
+            local_exp = self._storage.local.expiration  # pylint: disable=no-member
             local_args.append(f'--local {local_path} {local_exp}')
             aws_bucket = self._storage.aws.bucket  # pylint: disable=no-member
             aws_exp = self._storage.aws.expiration  # pylint: disable=no-member
@@ -382,12 +396,12 @@ class Daemon():
         local_args = ' '.join(local_args)
         aws_args = ' '.join(aws_args)
         container = client.containers.run(
-            _DOCKER_IMAGE_NAME,
-            '/bin/sh -c "exec python -m libreeye.gc'
+            Daemon._docker_get_image().id,
+            '/bin/sh -c "exec python -m libreeye.gc'  # pylint: disable=no-member
             f' {local_args}'
             f' {aws_args}'
-            f' >>{docker_log_file} 2>&1"',
-            name=docker_container_name,
+            f' >>{self._conf.gc.log} 2>&1"',
+            name=self._conf.gc.container_name,  # pylint: disable=no-member
             detach=True,
             mounts=[
                 # Time locale configuration from host
@@ -406,13 +420,13 @@ class Daemon():
                 ),
                 # Video writting directory
                 docker.types.Mount(
-                    target=docker_video_path,
+                    target=self._storage.local.path,  # pylint: disable=no-member
                     source=self._storage.local.path,  # pylint: disable=no-member
                     type='bind'
                 ),
                 # Process log file
                 docker.types.Mount(
-                    target=docker_log_file,
+                    target=self._conf.gc.log,  # pylint: disable=no-member
                     source=self._conf.gc.log,  # pylint: disable=no-member
                     type='bind'
                 )
@@ -453,6 +467,7 @@ class Daemon():
         # Stop all cameras
         for i in range(len(self._cameras)):
             self.stop_camera(i)
+        _logger.debug('daemon end')
 
     def terminate(self, *args):
         _logger.debug('terminate called')

@@ -5,7 +5,7 @@ import setuptools
 # Call setup method
 setuptools.setup(
     name='libreeye',
-    version='0.1.0',
+    version='0.2.0',
     description='WIP',
     url='https://chponte.github.io/libreeye',
     author='Christian Ponte',
@@ -39,5 +39,6 @@ setuptools.setup(
         'Bug Reports': 'https://github.com/chponte/libreeye/issues',
         'Funding': 'https://chponte.github.io/donate/',
         'Source': 'https://github.com/chponte/libreeye/',
+        'Docker hub': 'https://hub.docker.com/repository/docker/chponte/libreeye/',
     },
 )
