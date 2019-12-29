@@ -1,0 +1,6 @@
+.vscode/
+.virtualenv/
+**/__pycache__/
+build/
+dist/
+src/libreeye.egg-info/
