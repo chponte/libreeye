@@ -192,6 +192,7 @@ class Daemon():
             general.segment = config['general'].getint('SegmentLength')
             general.log = config['general'].get('Log')
             general.timeout = config['general'].getint('Timeout', 30)
+            general.cpus = config['general'].getfloat('Cpus', 1.0)
             if 'Resolution' in config['general']:
                 general.resolution = tuple(
                     [int(v) for v in
@@ -206,6 +207,7 @@ class Daemon():
             # Section: motion
             if config.has_section('motion'):
                 motion = Namespace(
+                    cpus=config['motion'].getfloat('Cpus'),
                     scale=config['motion'].getfloat('ResolutionScale'),
                     threshold=config['motion'].getfloat('Threshold'),
                     min_area=config['motion'].getfloat('MinArea'),
@@ -385,7 +387,7 @@ class Daemon():
                     type='bind'
                 )
             ],
-            nano_cpus=1*10**9,  # TODO: Configuration parameter
+            nano_cpus=int(camera.general.cpus * 10**9),
             stdout=True,
             stderr=True,
             stop_signal='SIGTERM',
@@ -429,7 +431,7 @@ class Daemon():
                 )
             ],
             detach=True,
-            nano_cpus=1*10**9,  # TODO: Configuration parameter
+            nano_cpus=int(camera.motion.cpus * 10**9),
             stdout=True,
             stderr=True,
             stop_signal='SIGTERM',
@@ -588,7 +590,7 @@ class Daemon():
                     type='bind'
                 )
             ],
-            nano_cpus=int(0.25*10**9),  # TODO: Configuration parameter
+            nano_cpus=int(0.25*10**9),
             stdout=True,
             stderr=True,
             stop_signal='SIGTERM',
