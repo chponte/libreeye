@@ -33,8 +33,8 @@ class Recorder:
     class _NoSinkError(Exception):
         pass
 
-    def __init__(self, url: str, protocol: str, segment_length: int,
-                 timeout: int):
+    def __init__(self, url: str, segment_length: int,
+                 timeout: int, resolution=None, ffmpeg_input_options=None):
         # Configuration attributes
         self._length = segment_length
         self._timeout = timeout
@@ -43,7 +43,7 @@ class Recorder:
         self._sinks_avail: List['Sink'] = []
         self._interrupt = False
         self._gm_offset = time.mktime(time.localtime(0)) - time.mktime(time.gmtime(0))
-        self._camera = Camera(url, protocol)
+        self._camera = Camera(url, resolution, ffmpeg_input_options)
 
     def add_sinks(self, sinks: List['Sink']):
         self._sinks.extend(sinks)
@@ -86,7 +86,7 @@ class Recorder:
         while not self._interrupt and t > last_time:
             last_time = t
             buffer = self._camera.read(self._timeout)
-            _logger.debug(f'segment iteration, {len(buffer)} bytes')
+            _logger.debug('segment iteration, %i bytes', len(buffer))
             self._write_to_sinks(buffer)
             t = (time.time() + self._gm_offset) % self._length
         _logger.debug('Segment ended')
@@ -118,20 +118,22 @@ class Recorder:
         self._interrupt = True
 
 
-def create_parser() -> argparse.ArgumentParser:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     # Camera class arguments
     parser.add_argument('--camera-url', type=str, required=True)
-    parser.add_argument('--camera-proto', choices=['tcp', 'udp'], required=True)
-    parser.add_argument('--camera-timeout', type=int, required=True)
     parser.add_argument('--camera-length', type=int, required=True)
+    parser.add_argument('--camera-timeout', type=int, required=True)
+    parser.add_argument('--camera-resolution-w', type=int)
+    parser.add_argument('--camera-resolution-h', type=int)
+    parser.add_argument('--ffmpeg-input-options', type=str)
     # FileSink class arguments
     parser.add_argument('--file-path', type=str, required=True)
     # AWSBucketSink class arguments
     parser.add_argument('--aws-bucket', type=str, required=True)
     parser.add_argument('--aws-folder', type=str, required=True)
     parser.add_argument('--aws-timeout', type=int, required=True)
-    return parser
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
@@ -143,14 +145,27 @@ if __name__ == '__main__':
         stream=sys.stderr
     )
     # Parse arguments
-    parser = create_parser()
-    args = parser.parse_args()
+    args = parse_args()
+    _logger.debug('Arguments: %s', args)
+    if args.camera_resolution_w is None or args.camera_resolution_h is None:
+        resolution = None
+    else:
+        resolution = (args.camera_resolution_w, args.camera_resolution_h)
+    if args.ffmpeg_input_options is None:
+        ffmpeg_input_options = None
+    else:
+        ffmpeg_input_options = {
+            name.lstrip('-'): val
+            for [name, val] in
+            [pair.split(' ') for pair in args.ffmpeg_input_options.split(',')]
+        }
     # Create recorder
     recorder = Recorder(
-        args.camera_url,
-        args.camera_proto,
-        args.camera_length,
-        args.camera_timeout
+        url=args.camera_url,
+        segment_length=args.camera_length,
+        timeout=args.camera_timeout,
+        resolution=resolution,
+        ffmpeg_input_options=ffmpeg_input_options
     )
     # Configure signal handler to exit execution
     def handle_sigterm(signum, _):

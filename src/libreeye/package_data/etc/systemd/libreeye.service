@@ -1,11 +1,13 @@
 [Unit]
 Description=Libreeye daemon service
+After=docker.service
 
 [Service]
-Type=forking
+Type=simple
 PIDFile=/run/libreeye.pid
 ExecStart=/usr/bin/env python3 -m libreeye.daemon.daemon
 ExecStop=/bin/kill -s SIGTERM $MAINPID
+TimeoutStopSec=infinity
 User=root
 
 [Install]

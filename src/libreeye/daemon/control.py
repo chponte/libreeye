@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
-from libreeye.daemon import definitions, socket_actions
 import argparse
 import errno
 import json
@@ -24,6 +23,7 @@ import shutil
 import socket
 import subprocess
 import sys
+from libreeye.daemon import definitions, socket_actions
 
 
 def system_actions(args):
@@ -38,21 +38,40 @@ def system_actions(args):
             'libreeye', 'package_data/etc/libreeye'
         )
         dst_config_path = '/etc/libreeye'
-        os.makedirs(dst_config_path, exist_ok=True)
+        # Copy general files
+        if not os.path.isdir(dst_config_path):
+            os.mkdir(dst_config_path, mode=0o755)
         for f in os.listdir(src_config_path):
-            new_f = os.path.join(dst_config_path, f)
-            if os.path.isfile(new_f):
+            src_f = os.path.join(src_config_path, f)
+            # Copy nothing but files
+            if not os.path.isfile(src_f):
+                continue
+            dst_f = os.path.join(dst_config_path, f)
+            # If file already exists skip it
+            if os.path.isfile(dst_f):
                 print(
-                    f'Warning: file {new_f} already exists, keeping old one', file=sys.stderr
+                    f'Warning: file {dst_f} already exists, keeping old one',
+                    file=sys.stderr
                 )
                 continue
-            shutil.copy(os.path.join(src_config_path, f), new_f)
+            shutil.copy(os.path.join(src_config_path, f), dst_f)
+        # If cameras directory is empty, create a sample file
+        src_config_path = os.path.join(src_config_path, 'cameras.d')
+        dst_config_path = os.path.join(dst_config_path, 'cameras.d')
+        if not os.path.isdir(dst_config_path):
+            os.mkdir(dst_config_path, mode=0o755)
+        if len(os.listdir(dst_config_path)) == 0:
+            shutil.copy(
+                os.path.join(src_config_path, 'sample.conf'),
+                os.path.join(dst_config_path, 'sample.conf')
+            )
     # Enable systemd service
     if args.action == 'systemd-enable':
         service_path = pkg_resources.resource_filename(
             'libreeye', 'package_data/etc/systemd/libreeye.service'
         )
-        subprocess.run(f'systemctl enable {service_path}', shell=True)
+        subprocess.run(f'systemctl enable {service_path}', shell=True,
+                       check=True)
 
 
 def camera_actions(args):
