@@ -5,7 +5,7 @@ import setuptools
 # Call setup method
 setuptools.setup(
     name='libreeye',
-    version='0.4.0',
+    version='0.4.1',
     description='WIP',
     url='https://chponte.github.io/libreeye',
     author='Christian Ponte',

@@ -96,10 +96,13 @@ class Daemon():
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, context: DaemonContext):
+    def __init__(self, context: DaemonContext = None):
         # Singleton
         if self._initialized:  # pylint: disable=access-member-before-definition
             return
+        if context is None:
+            raise TypeError('__init__() requires a DaemonContext when called'
+                            ' for the first time')
         self._initialized = True
         # Set daemon as active until stopped
         self._active = True
@@ -173,13 +176,19 @@ class Daemon():
     def _read_cameras_config(path: str) -> List[Namespace]:
         configs = list()
         for f in os.listdir(path):
+            # Skip if item is not a file
+            if not os.path.isfile(os.path.join(path, f)):
+                continue
+            # Skip if file extension is not .conf
+            if os.path.splitext(f)[1] != '.conf':
+                continue
             config = configparser.ConfigParser()
             config.read(os.path.join(path, f))
             # Section: general
             if not config.has_section('general'):
                 raise KeyError(f'\"general\" section missing in {f}')
             general = Namespace(name=os.path.splitext(f)[0])
-            general.url = config['general'].get('Url')
+            general.url = config['general'].get('Url').strip('\'\"')
             general.segment = config['general'].getint('SegmentLength')
             general.log = config['general'].get('Log')
             general.timeout = config['general'].getint('Timeout', 30)
@@ -323,7 +332,7 @@ class Daemon():
         client = docker.from_env()
         media_mount_path = os.path.join(self._storage.local.path, camera.general.name)  # pylint: disable=no-member
         recorder_args = list()
-        recorder_args.append(f'--camera-url {camera.general.url}')
+        recorder_args.append(f'--camera-url \'{camera.general.url}\'')
         recorder_args.append(f'--camera-length {camera.general.segment}')
         recorder_args.append(f'--camera-timeout {camera.general.timeout}')
         if camera.general.resolution is not None:
@@ -468,6 +477,25 @@ class Daemon():
         r = container.wait()
         return r['StatusCode']
 
+    def _docker_stop_all(self):
+        _logger.debug('_docker_stop_all called')
+        client = docker.from_env()
+        # Signal all containers first
+        waits = list()
+        for container in client.containers.list(filters={
+            'ancestor': Daemon._docker_get_image().id
+        }):
+            waits.append((container.name, container))
+            container.kill('SIGTERM')
+        # Wait for completion
+        for name, container in waits:
+            try:
+                r = container.wait()
+                _logger.debug('container %s: %s', name, r)
+            # If the container has already exited, docker will have removed it
+            except docker.errors.NotFound:
+                _logger.debug('container %s has already been deleted', name)
+
     def stop_camera(self, cid: int) -> int:
         _logger.debug('stop_camera called on id %i', cid)
         self._cameras[cid].state.active = False
@@ -511,7 +539,7 @@ class Daemon():
         if Daemon._docker_is_container_running(self._conf.gc.container_name):  # pylint: disable=no-member
             raise RuntimeError()
         # Check if log file already exists
-        Daemon._create_if_missing(self._conf.gc.log)  # pylint: disable=no-member
+        Daemon._create_file_if_missing(self._conf.gc.log)  # pylint: disable=no-member
         # Run container in attached mode
         local_args = list()
         aws_args = list()
@@ -594,10 +622,8 @@ class Daemon():
                 time.sleep(2.5)
             # Terminate the message server
             server.shutdown()
-        # Stop all cameras
-        for i, c in enumerate(self._cameras):
-            if c.state.active:
-                self.stop_camera(i)
+        # Stop all running containers
+        self._docker_stop_all()
         _logger.debug('daemon end')
 
     def terminate(self, *_):
