@@ -1,4 +1,8 @@
+import time
+
 import cv2
+
+from libreeye.md.iterator import FrameIterator
 
 cv2.setUseOptimized(True)
 
@@ -9,9 +13,8 @@ def basic_motion(frame_iter, delta, min_area, cooldown, debug):
     # initialize the camera and grab a reference to the raw camera capture
     avg = None
     last_motion = -cooldown
-    motion_frames = list()
     # capture frames from the camera
-    for frame_num, frame in enumerate(frame_iter()):
+    for frame_num, frame in enumerate(frame_iter):
         # assume no motion by default
         frame_has_motion = False
         # blur frame
@@ -20,7 +23,7 @@ def basic_motion(frame_iter, delta, min_area, cooldown, debug):
         if avg is None:
             avg = gray.copy().astype("float")
             continue
-        # accumulate the weighted average between the current and previous 
+        # accumulate the weighted average between the current and previous
         cv2.accumulateWeighted(gray, avg, 0.5)
         # check to see if enough time has passed between uploads
         if frame_num - last_motion < cooldown:
@@ -49,10 +52,32 @@ def basic_motion(frame_iter, delta, min_area, cooldown, debug):
         # check to see if there is motion
         if frame_has_motion:
             last_motion = frame_num
-            motion_frames.append((frame_num, frame))
+            yield frame
         # check to see if the frames should be displayed to screen
         if debug:
             # display the security feed
             cv2.imshow("Window", frame)
             cv2.waitKey(1)
-    return motion_frames
+
+
+class MotionDetection():
+    def __init__(self, config, frame_iter, logfile):
+        self._scale = config.resolution_scale()
+        self._threshold = config.threshold()
+        self._min_area = config.min_area()
+        self._cooldown = config.cooldown()
+        self._iter = frame_iter
+        self._logfile = logfile
+
+    def run(self):
+        f = open(self._logfile, 'a')
+        # Run the motion detection algorithm
+        for frame in basic_motion(
+            self._iter,
+            self._threshold,
+            self._min_area,
+            self._cooldown,
+            False
+        ):
+            print(time.asctime(), file=f)
+            f.flush()

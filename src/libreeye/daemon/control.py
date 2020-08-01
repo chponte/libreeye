@@ -97,19 +97,9 @@ def camera_actions(args):
         sock.close()
 
 
-def gc_actions(args):
-    if args.action == 'run':
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(definitions.socket_path)
-        socket_actions.write_msg(sock, json.dumps(
-            {'object': 'gc', 'action': args.action}))
-        answer = json.loads(socket_actions.read_msg(sock))
-        print(f'Garbage collector terminated with code {answer["exitcode"]}')
-        sock.close()
-
-
 def configure_argparse() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='libreeye daemon control utility')
+    parser = argparse.ArgumentParser(
+        description='libreeye daemon control utility')
     subparsers = parser.add_subparsers(title='objects')
     # System
     system_subparser = subparsers.add_parser(name='system')
@@ -119,12 +109,8 @@ def configure_argparse() -> argparse.ArgumentParser:
     # Camera
     camera_subparser = subparsers.add_parser(name='camera')
     camera_subparser.add_argument('action', choices=['ls', 'start', 'stop'])
-    camera_subparser.add_argument('id', type=int, nargs='?', default=None)
+    camera_subparser.add_argument('id', type=str, nargs='?', default=None)
     camera_subparser.set_defaults(func=camera_actions)
-    # Garbage collector
-    gc_subparser = subparsers.add_parser(name='gc')
-    gc_subparser.add_argument('action', choices=['run'])
-    gc_subparser.set_defaults(func=gc_actions)
     return parser
 
 

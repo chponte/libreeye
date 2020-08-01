@@ -20,13 +20,9 @@ setuptools.setup(
     packages=setuptools.find_packages(where='src'),
     python_requires='>=3.7',
     install_requires=[
-        'boto3',
-        'botocore',
-        'docker',
         'ffmpeg-python',
         'numpy',
         'opencv-python-headless',
-        'pyinotify',
         'python-daemon'
     ],
     entry_points={

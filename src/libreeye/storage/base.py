@@ -15,15 +15,16 @@
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
 from abc import ABC, abstractmethod
+from typing import Any, Dict, List
 
 
-class ItemStorage(ABC):
+class Writer(ABC):
     @abstractmethod
-    def get_days(self) -> int:
+    def write(self, frame) -> None:
         pass
 
     @abstractmethod
-    def walk(self):
+    def close(self) -> None:
         pass
 
 
@@ -33,9 +34,15 @@ class Item(ABC):
         pass
 
     @abstractmethod
-    def getmtime(self) -> float:
+    def remove(self) -> None:
+        pass
+
+
+class Storage(ABC):
+    @abstractmethod
+    def list_expired(self):
         pass
 
     @abstractmethod
-    def remove(self) -> None:
+    def create_writer(self, name) -> Writer:
         pass
