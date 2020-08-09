@@ -44,5 +44,5 @@ class Storage(ABC):
         pass
 
     @abstractmethod
-    def create_writer(self, name) -> Writer:
+    def create_writer(self, name, camera_config, probe) -> Writer:
         pass

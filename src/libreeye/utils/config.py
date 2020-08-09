@@ -10,8 +10,6 @@ class Config:
     def __init__(self, root):
         config = configparser.ConfigParser()
         config.read(os.path.join(root, 'libreeye.conf'))
-        # garbage collector options
-        self._gc = config['garbage-collector']
         # daemon options
         self._daemon = config['daemon']
         # configurations for cameras
@@ -30,34 +28,26 @@ class Config:
     def storage(self):
         return self._storage
 
-    def daemon_watchdog(self):
-        return {
-            'On': True,
-            'Off': False
-        }[self._daemon.get('Watchdog')]
-
     def daemon_logfile(self):
         return self._daemon.get('Log')
-
-    def gc_frequency(self):
-        return {
-            'hourly': 3600,
-            'daily': 86400,
-            'weekly': 604800
-        }[self._gc.get('Frequency')]
-
-    def gc_logfile(self):
-        self._gc.get('Log')
 
 
 class CameraConfig:
     def __init__(self, path):
         config = configparser.ConfigParser()
         config.read(path)
-        # Section: general
+        # Section: input
         if not config.has_section('general'):
             raise KeyError(f'\"general\" section missing in {path}')
         self._general = config['general']
+        # Section: input
+        if not config.has_section('input'):
+            raise KeyError(f'\"input\" section missing in {path}')
+        self._input = CameraInputConfig(config['input'])
+        # Section: output
+        if not config.has_section('output'):
+            raise KeyError(f'\"output\" section missing in {path}')
+        self._output = CameraOutputConfig(config['output'])
         # Section: motion
         self._motion = (
             CameraMotionConfig(config['motion'])
@@ -65,30 +55,64 @@ class CameraConfig:
             else None
         )
 
+    def input(self):
+        return self._input
+
+    def output(self):
+        return self._output
+
     def motion(self):
         return self._motion
-
-    def url(self):
-        return self._general.get('Url').strip('\'\"')
 
     def logfile(self):
         return self._general.get('Log')
 
+
+class CameraInputConfig:
+    def __init__(self, config):
+        self._input = config
+
+    def url(self):
+        return self._input.get('Url').strip('\'\"')
+
     def timeout(self):
-        return self._general.getint('Timeout', 30)
+        return self._input.getint('Timeout', 30)
 
     def resolution(self):
         return (
-            tuple([int(v) for v in self._general.get('Resolution').split(',')])
-            if 'Resolution' in self._general
+            tuple([int(v) for v in self._input.get('Resolution').split(',')])
+            if 'Resolution' in self._input
             else None
         )
 
     def ffmpeg_options(self):
-        if 'FFmpegOptions' not in self._general:
+        if 'FFmpegOptions' not in self._input:
             options = {}
         else:
-            split = shlex.split(self._general.get('FFmpegOptions'))
+            split = shlex.split(self._input.get('FFmpegOptions'))
+            options = dict(zip([s[1:] for s in split[0::2]], split[1::2]))
+        _logger.debug(options)
+        return options
+
+
+class CameraOutputConfig:
+    def __init__(self, config):
+        self._output = config
+
+    def local_ffmpeg_options(self):
+        if 'LocalFFmpegOptions' not in self._output:
+            options = {}
+        else:
+            split = shlex.split(self._output.get('LocalFFmpegOptions'))
+            options = dict(zip([s[1:] for s in split[0::2]], split[1::2]))
+        _logger.debug(options)
+        return options
+
+    def youtube_ffmpeg_options(self):
+        if 'YoutubeFFmpegOptions' not in self._output:
+            options = {}
+        else:
+            split = shlex.split(self._output.get('YoutubeFFmpegOptions'))
             options = dict(zip([s[1:] for s in split[0::2]], split[1::2]))
         _logger.debug(options)
         return options
@@ -118,11 +142,14 @@ class StorageConfig:
     def __init__(self, path):
         config = configparser.ConfigParser()
         config.read(path)
-        # Build local Namespace
         self._local = LocalStorageConfig(config['local'])
+        self._youtube = YoutubeStorageConfig(config['youtube'])
 
     def local(self):
         return self._local
+
+    def youtube(self):
+        return self._youtube
 
 
 class LocalStorageConfig:
@@ -137,3 +164,17 @@ class LocalStorageConfig:
 
     def expiration(self):
         return self._local.getint('Expiration', 30)
+
+
+class YoutubeStorageConfig:
+    def __init__(self, config):
+        self._youtube = config
+
+    def secrets_file(self):
+        return self._youtube.get('SecretsFile')
+
+    def segment_length(self):
+        return self._youtube.getint('SegmentLength')
+
+    def expiration(self):
+        return self._youtube.getint('Expiration', 30)

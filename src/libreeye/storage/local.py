@@ -32,8 +32,8 @@ _logger = logging.getLogger(__name__)
 
 class LocalStorage(Storage):
     def __init__(self, config: LocalStorageConfig):
+        self._config = config
         self._path = config.root()
-        self._segment_length = config.segment_length()
         self._days = config.expiration()
 
     def list_expired(self):
@@ -44,10 +44,11 @@ class LocalStorage(Storage):
                 if os.path.getmtime(fullpath) <= due_date:
                     yield LocalItem(fullpath)
 
-    def create_writer(self, name, probe):
+    def create_writer(self, name, camera_config, probe):
         return LocalWriter(
             os.path.join(self._path, name),
-            self._segment_length,
+            self._config.segment_length(),
+            camera_config.output().local_ffmpeg_options(),
             probe['codec_name']
         )
 
@@ -65,11 +66,12 @@ class LocalItem(Item):
 
 
 class LocalWriter(Writer):
-    def __init__(self, path, segment_length, ffmpeg_format):
+    def __init__(self, path, segment_length, ffmpeg_opts, ffmpeg_format):
         super().__init__()
         self._path = path
         os.makedirs(self._path, mode=0o755, exist_ok=True)
         self._segment_length = segment_length
+        self._ffmpeg_opts = ffmpeg_opts
         self._ffmpeg_format = ffmpeg_format
         self._ffmpeg = None
         self._segment_start = 0
@@ -83,7 +85,7 @@ class LocalWriter(Writer):
         self._ffmpeg = (
             ffmpeg
             .input('pipe:', f=self._ffmpeg_format, v='warning')
-            .output(filename, vcodec='copy')
+            .output(filename, **self._ffmpeg_opts)
             .overwrite_output()
             .run_async(pipe_stdin=True)
         )

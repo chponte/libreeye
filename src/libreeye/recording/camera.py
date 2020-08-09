@@ -56,14 +56,15 @@ class Camera:
 
     def _create_ffmpeg(self) -> subprocess.Popen:
         _logger.debug('_create_ffmpeg called')
+        input_config = self._config.input()
         ffmpeg_pipe = ffmpeg.input(
-            self._config.url(), v='warning', **self._config.ffmpeg_options())
+            input_config.url(), v='warning', **input_config.ffmpeg_options())
         # If a resolution is specified, rescale the image
-        if self._config.resolution():
+        if input_config.resolution():
             ffmpeg_pipe = ffmpeg_pipe.filter(
                 'scale',
-                width=self._config.resolution()[0],
-                height=self._config.resolution()[1]
+                width=input_config.resolution()[0],
+                height=input_config.resolution()[1]
             )
         # Draw the time watermark
         # ffmpeg_pipe = ffmpeg_pipe.filter(
@@ -98,9 +99,10 @@ class Camera:
 
     def _ffmpeg_probe(self):
         _logger.debug('_ffmpeg_probe called')
+        input_config = self._config.input()
         try:
-            p = ffmpeg.probe(self._config.url(),
-                             **self._config.ffmpeg_options())
+            p = ffmpeg.probe(input_config.url(),
+                             **input_config.ffmpeg_options())
             if len(p['streams']) != 1:
                 raise RuntimeError(
                     'Unexpected number of streams while ffprobing camera'
@@ -112,16 +114,17 @@ class Camera:
             raise RuntimeError('Error while ffprobing camera') from e
 
     def _create_motion_thread(self, probe):
-        config = self._config.motion()
+        motion_config = self._config.motion()
         num, denom = [int(n) for n in probe['r_frame_rate'].split('/')]
         frame_iter = FrameIterator(
             probe['codec_name'],
             probe['width'],
             probe['height'],
             num // denom,
-            config.resolution_scale()
+            motion_config.resolution_scale()
         )
-        motion = MotionDetection(config, frame_iter, config.logfile())
+        motion = MotionDetection(motion_config, frame_iter,
+                                 motion_config.logfile())
         thread = threading.Thread(target=motion.run)
         thread.start()
         return frame_iter, thread
@@ -142,7 +145,7 @@ class Camera:
         # Probe camera
         probe = self._ffmpeg_probe()
         # Open writers
-        writers = [s.create_writer(self._name, probe)
+        writers = [s.create_writer(self._name, self._config, probe)
                    for s in self._storage_list]
         # Start motion detection thread if enabled
         frame_iter = None
@@ -162,8 +165,12 @@ class Camera:
                     if frame_iter is not None:
                         frame_iter.write(frame)
                 time.sleep(0.001)
-            # Stop FFmpeg input stream
-            if process.poll() is None:
+            # If inner loop exited because FFmpeg suddenly stopped, sleep for
+            # some time and re-enter loop
+            if self._active:
+                time.sleep(10)
+            # Else stop FFmpeg process and exit loop
+            else:
                 self._stop_ffmpeg(process)
         # Close writers
         for w in writers:

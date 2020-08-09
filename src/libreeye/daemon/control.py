@@ -23,7 +23,10 @@ import shutil
 import socket
 import subprocess
 import sys
+
 from libreeye.daemon import definitions, socket_actions
+from libreeye.storage.youtube import YoutubeStorage
+from libreeye.utils.config import Config
 
 
 def system_actions(args):
@@ -72,6 +75,12 @@ def system_actions(args):
         )
         subprocess.run(f'systemctl enable {service_path}', shell=True,
                        check=True)
+    if args.action == 'youtube-auth':
+        service_path = pkg_resources.resource_filename(
+            'libreeye', 'package_data/etc/systemd/libreeye.service'
+        )
+        subprocess.run(f'systemctl enable {service_path}', shell=True,
+                       check=True)
 
 
 def camera_actions(args):
@@ -97,6 +106,20 @@ def camera_actions(args):
         sock.close()
 
 
+def storage_actions(args):
+    # Check user
+    if os.getuid() != 0:
+        print('storage actions have to be run as root',
+              file=sys.stderr)
+        exit(errno.EPERM)
+    # Create configuration files
+    if args.type == 'youtube':
+        if args.action == 'auth-user':
+            config = Config('/etc/libreeye')
+            ys = YoutubeStorage(config.storage().youtube())
+            ys.oauth_login()
+
+
 def configure_argparse() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description='libreeye daemon control utility')
@@ -111,6 +134,12 @@ def configure_argparse() -> argparse.ArgumentParser:
     camera_subparser.add_argument('action', choices=['ls', 'start', 'stop'])
     camera_subparser.add_argument('id', type=str, nargs='?', default=None)
     camera_subparser.set_defaults(func=camera_actions)
+    # Storage
+    storage_subparser = subparsers.add_parser(name='storage')
+    storage_subparser.add_argument('type', choices=['youtube'])
+    storage_subparser.add_argument(
+        'action', choices=['auth-user'])
+    storage_subparser.set_defaults(func=storage_actions)
     return parser
 
 

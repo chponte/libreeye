@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
-from argparse import Namespace
 from typing import List, Union
 import configparser
 import errno
@@ -25,7 +24,6 @@ import pkg_resources
 import sched
 import signal
 import socketserver
-import multiprocessing as mp
 import sys
 import threading
 import time
@@ -36,10 +34,10 @@ from daemon.pidfile import PIDLockFile
 from libreeye.daemon import definitions, socket_actions
 from libreeye.recording.camera import Camera
 from libreeye.storage.local import LocalStorage
+from libreeye.storage.youtube import YoutubeStorage
 from libreeye.utils.config import Config
 
 logging.getLogger('urllib3').setLevel(logging.WARNING)
-
 _logger = logging.getLogger(__name__)
 
 
@@ -117,32 +115,26 @@ class Daemon():
         context.stderr = logging.root.handlers[0].stream
         # Create sched
         self._sched = sched.scheduler(time.time, time.sleep)
-        # Schedule cleanup
-        self._sched.enter(
-            self._conf.gc_frequency(),
-            1,
-            self._clean_expired
-        )
         # Process dict
         self._cameras = {
             name: {'running': False} for name in self._conf.cameras()
         }
         # Storage list
-        self._storage = [LocalStorage(self._conf.storage().local())]
+        self._storage = [
+            LocalStorage(self._conf.storage().local()),
+            YoutubeStorage(self._conf.storage().youtube())
+        ]
 
-    def _clean_expired(self):
-        _logger.debug('_clean_expired called')
-        # Schedule next run
-        self._sched.enter(
-            self._conf.gc_frequency(),
-            1,
-            self._clean_expired
-        )
-        # Clean expired files from all storage systems
-        for s in self._storage:
-            for i in s.list_expired():
-                _logger.debug('Removing %s', i.get_path())
-                i.remove()
+    def _clean_storage_and_schedule(self):
+        def thread_body():
+            # Clean expired files from all storage systems
+            for s in self._storage:
+                for i in s.list_expired():
+                    i.remove()
+            # Schedule next run
+            self._sched.enter(86400, 1, self._clean_storage_and_schedule)
+        _logger.debug('_clean_storage_and_schedule called')
+        threading.Thread(target=thread_body).start()
 
     def start_camera(self, name):
         _logger.debug('start_camera called on %s', name)
@@ -197,6 +189,8 @@ class Daemon():
             definitions.socket_path,
             _ThreadingUnixRequestHandler
         )
+        # Clean and schedule for the first time
+        self._clean_storage_and_schedule()
         with server:
             # Start a thread with the message server -- that thread will then
             # start one more thread for each request
