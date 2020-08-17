@@ -1,14 +1,15 @@
 [Unit]
 Description=Libreeye daemon service
-After=docker.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-PIDFile=/run/libreeye.pid
-ExecStart=/usr/bin/env python3 -m libreeye.daemon.daemon
+PIDFile=/tmp/libreeye.pid
+ExecStart=
 ExecStop=/bin/kill -s SIGTERM $MAINPID
 TimeoutStopSec=infinity
-User=root
+User=libreeye
 
 [Install]
 WantedBy=multi-user.target

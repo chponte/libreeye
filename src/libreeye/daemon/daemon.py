@@ -15,12 +15,12 @@
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
 from typing import List, Union
-import configparser
 import errno
+import grp
 import json
 import logging
 import os
-import pkg_resources
+import pwd
 import sched
 import signal
 import socketserver
@@ -39,6 +39,8 @@ from libreeye.utils.config import Config
 
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 _logger = logging.getLogger(__name__)
+_uid = pwd.getpwnam('libreeye').pw_uid
+_gid = grp.getgrnam('libreeye').gr_gid
 
 
 class _ThreadingUnixRequestHandler(socketserver.BaseRequestHandler):
@@ -75,7 +77,7 @@ class _ThreadingUnixServer(socketserver.ThreadingMixIn,
             os.remove(self.server_address)
         socketserver.UnixStreamServer.server_bind(self)
         os.chmod(self.server_address, 0o660)
-        os.chown(self.server_address, 0, 0)
+        os.chown(self.server_address, _uid, _gid)
 
 
 class Daemon():
@@ -215,13 +217,13 @@ class Daemon():
 
 def main():
     # Check user
-    if os.getuid() != 0:
-        print('daemon must be run as root!', file=sys.stderr)
+    if os.getuid() != _uid:
+        print('daemon must be run by the libreeye user', file=sys.stderr)
         sys.exit(errno.EPERM)
     # Create DaemonContext
     context = DaemonContext(
-        uid=0,
-        gid=0,
+        uid=_uid,
+        gid=_gid,
         pidfile=PIDLockFile(definitions.pidfile)
     )
     # Create daemon, complete DaemonContext configuration
@@ -234,11 +236,7 @@ def main():
             context.pidfile.break_lock()
         else:
             print('daemon is already running!', file=sys.stderr)
-            sys.exit(1)
+            sys.exit(errno.EEXIST)
     # Start daemon
     with context:
         daemon.run()
-
-
-if __name__ == '__main__':
-    main()

@@ -15,17 +15,20 @@
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
 from datetime import datetime, timedelta, timezone
+import grp
 import json
 import logging
 import os
+import pwd
+import stat
 import threading
 import time
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+import ffmpeg
 import googleapiclient.discovery
 import googleapiclient.errors
-import ffmpeg
 
 from libreeye.storage.base import Storage, Item, Writer
 from libreeye.utils.config import YoutubeStorageConfig
@@ -40,20 +43,36 @@ class YoutubeStorage(Storage):
     def __init__(self, config: YoutubeStorageConfig):
         self._segment_length = config.segment_length()
         self._expiration = config.expiration()
-        # Check credentials
-        self._secrets_file = config.secrets_file()
-        self._credentials_file = os.path.join(
-            os.path.dirname(self._secrets_file), 'credentials.json'
-        )
+        self._secrets_file = '/etc/libreeye/secrets/youtube_api.json'
+        self._credentials_file = '/etc/libreeye/secrets/youtube_creds.json'
 
     def oauth_login(self):
+        # Check secrets file permissions
+        st = os.stat(self._secrets_file)
+        if (st.st_mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH)):
+            raise PermissionError(
+                f'File {self._secrets_file} can be accessed by everyone')
+        # Auth user
         flow = InstalledAppFlow.from_client_secrets_file(
             self._secrets_file, _scopes)
         credentials = flow.run_console()
+        # Save credentials
         with open(self._credentials_file, 'w') as f:
             f.write(credentials.to_json())
+        # Change file ownership
+        uid = pwd.getpwnam('root').pw_uid
+        gid = grp.getgrnam('libreeye').gr_gid
+        os.chown(self._credentials_file, uid, gid)
+        # Change file permissions
+        os.chmod(self._credentials_file, stat.S_IRUSR | stat.S_IRGRP)
 
     def _build_credentials(self):
+        # Check credentials file permissions
+        st = os.stat(self._credentials_file)
+        if (st.st_mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IXOTH)):
+            raise PermissionError(
+                f'File {self._credentials_file} can be accessed by everyone')
+        # Build Credentials object
         with open(self._credentials_file, 'r') as f:
             return Credentials(**json.loads(f.read()))
 

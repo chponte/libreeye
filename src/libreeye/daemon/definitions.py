@@ -14,5 +14,5 @@
 # You should have received a copy of the GNU General Public License
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
-pidfile = '/run/libreeyed.pid'
-socket_path = '/run/libreeyed.sock'
+pidfile = '/tmp/libreeyed.pid'
+socket_path = '/tmp/libreeyed.sock'

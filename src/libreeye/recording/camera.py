@@ -43,9 +43,11 @@ class Camera:
         self._process = None
 
     def _configure_logger(self):
+        log_file = self._config.logfile()
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
         root_logger = logging.getLogger()
         root_logger.handlers.clear()
-        fh = logging.FileHandler(self._config.logfile(), 'a')
+        fh = logging.FileHandler(log_file, 'a')
         fh.setFormatter(logging.Formatter(
             fmt='[%(asctime)s] %(filename)s:%(lineno)d %(message)s',
             datefmt='%d/%m %H:%M:%S'

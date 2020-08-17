@@ -170,9 +170,6 @@ class YoutubeStorageConfig:
     def __init__(self, config):
         self._youtube = config
 
-    def secrets_file(self):
-        return self._youtube.get('SecretsFile')
-
     def segment_length(self):
         return self._youtube.getint('SegmentLength')
 

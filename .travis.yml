@@ -1,21 +1,38 @@
 language: python
 
-python:
-  - "3.7"
+services:
+  - docker
 
-before-install: python -m pip install --upgrade pip
+jobs:
+  include:
+  - env: IMAGE=fedora TAG=32
+  # - env: IMAGE=debian TAG=10
 
-install: python -m pip install twine wheel
+install: docker pull ${IMAGE}:${TAG}
 
-script: python setup.py sdist bdist_wheel
+script:
+  - export VERSION=$(cat VERSION)
+  - docker run -e VERSION=$VERSION -v $(pwd):/libreeye-${VERSION} ${IMAGE}:${TAG} /libreeye-${VERSION}/scripts/build-${IMAGE}.sh
+
+before_deploy:
+  - mkdir github_deploy/
+  - cp $(find . -name '*.noarch.rpm') github_deploy/
+
+deploy:
+  provider: releases
+  api_key: $GITHUB_TOKEN
+  file_glob: true
+  file: github_deploy/*
+  skip_cleanup: true
+  on:
+    tags: true
+
 
 branches:
   only:
     - master
+    - dev
+    - /^[\d.]+$/
 
-deploy:
-  skip_cleanup: true
-  provider: pypi
-  user: "__token__"
-  password: "$PYPI_TOKEN"
-  distributions: "sdist bdist_wheel"
+git:
+  depth: false
