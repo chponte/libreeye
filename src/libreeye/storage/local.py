@@ -44,12 +44,13 @@ class LocalStorage(Storage):
                 if os.path.getmtime(fullpath) <= due_date:
                     yield LocalItem(fullpath)
 
-    def create_writer(self, name, camera_config, probe):
+    def create_writer(self, name, camera_config, probe, error_queue):
         return LocalWriter(
             os.path.join(self._path, name),
             self._config.segment_length(),
             camera_config.output().local_ffmpeg_options(),
-            probe['codec_name']
+            probe['codec_name'],
+            error_queue
         )
 
 
@@ -66,13 +67,15 @@ class LocalItem(Item):
 
 
 class LocalWriter(Writer):
-    def __init__(self, path, segment_length, ffmpeg_opts, ffmpeg_format):
+    def __init__(self, path, segment_length, ffmpeg_opts, ffmpeg_format,
+                 error_queue):
         super().__init__()
         self._path = path
         os.makedirs(self._path, mode=0o755, exist_ok=True)
         self._segment_length = segment_length
         self._ffmpeg_opts = ffmpeg_opts
         self._ffmpeg_format = ffmpeg_format
+        self._error_queue = error_queue
         self._ffmpeg = None
         self._segment_start = 0
 

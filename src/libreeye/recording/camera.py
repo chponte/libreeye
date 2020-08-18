@@ -14,12 +14,17 @@
 # You should have received a copy of the GNU General Public License
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
+# TODO:
+# - Multiple stream handling (video + audio)
+# - Add watermark when enabled in configuration
+
 from typing import List
 import errno
 import fcntl
 import logging
 import multiprocessing
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -41,6 +46,7 @@ class Camera:
         self._storage_list = storage_list
         self._active = False
         self._process = None
+        self._error_queue = queue.Queue()
 
     def _configure_logger(self):
         log_file = self._config.logfile()
@@ -147,8 +153,10 @@ class Camera:
         # Probe camera
         probe = self._ffmpeg_probe()
         # Open writers
-        writers = [s.create_writer(self._name, self._config, probe)
-                   for s in self._storage_list]
+        writers = [
+            s.create_writer(self._name, self._config, probe, self._error_queue)
+            for s in self._storage_list
+        ]
         # Start motion detection thread if enabled
         frame_iter = None
         motion_thread = None
@@ -160,6 +168,18 @@ class Camera:
             process = self._create_ffmpeg()
             # Read loop
             while self._active and process.poll() is None:
+                # Check for exceptions
+                try:
+                    err = self._error_queue.get(block=False)
+                    # If there is an error, close writers and frame iterator
+                    for w in writers:
+                        w.close()
+                    frame_iter.close()
+                    # And raise error
+                    raise err
+                except queue.Empty:
+                    pass
+                # Read next frame
                 frame = process.stdout.read()
                 if frame is not None:
                     for w in writers:

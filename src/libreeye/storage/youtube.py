@@ -107,13 +107,14 @@ class YoutubeStorage(Storage):
                 more_pages = False
         return expired
 
-    def create_writer(self, name, camera_config, probe):
+    def create_writer(self, name, camera_config, probe, error_queue):
         return YoutubeWriter(
             name,
             self._segment_length,
             camera_config.output().youtube_ffmpeg_options(),
             self._build_credentials(),
-            probe
+            probe,
+            error_queue
         )
 
 
@@ -131,13 +132,15 @@ class YoutubeItem(Item):
 
 
 class YoutubeWriter(Writer):
-    def __init__(self, name, segment_length, ffmpeg_opts, credentials, probe):
+    def __init__(self, name, segment_length, ffmpeg_opts, credentials, probe,
+                 error_queue):
         super().__init__()
         self._name = name
         self._segment_length = segment_length
         self._ffmpeg_output_opts = ffmpeg_opts
         self._credentials = credentials
         self._ffmpeg_input_format = probe['codec_name']
+        self._error_queue = error_queue
         self._bc = None
         self._ls = None
         self._ffmpeg = None
@@ -153,7 +156,8 @@ class YoutubeWriter(Writer):
                 self._ffmpeg_open()
                 retry = False
             except googleapiclient.errors.HttpError as e:
-                raise RuntimeError from e
+                _logger.error(str(e))
+                self._error_queue.put(e)
             except OSError as e:
                 time.sleep(10)
         self._thread = None
@@ -168,7 +172,8 @@ class YoutubeWriter(Writer):
                 self._ffmpeg_open()
                 retry = False
             except googleapiclient.errors.HttpError as e:
-                raise RuntimeError from e
+                _logger.error(str(e))
+                self._error_queue.put(e)
             except OSError as e:
                 time.sleep(10)
         self._thread = None
