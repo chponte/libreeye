@@ -1,0 +1,15 @@
+[Unit]
+Description=Libreeye daemon service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+PIDFile=/tmp/libreeye.pid
+ExecStart=
+ExecStop=/bin/kill -s SIGTERM $MAINPID
+TimeoutStopSec=infinity
+User=libreeye
+
+[Install]
+WantedBy=multi-user.target

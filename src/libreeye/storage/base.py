@@ -14,5 +14,35 @@
 # You should have received a copy of the GNU General Public License
 # along with Libreeye. If not, see <http://www.gnu.org/licenses/>.
 
-pidfile = '/tmp/libreeyed.pid'
-socket_path = '/tmp/libreeyed.sock'
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
+
+
+class Writer(ABC):
+    @abstractmethod
+    def write(self, frame) -> None:
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        pass
+
+
+class Item(ABC):
+    @abstractmethod
+    def get_path(self) -> str:
+        pass
+
+    @abstractmethod
+    def remove(self) -> None:
+        pass
+
+
+class Storage(ABC):
+    @abstractmethod
+    def list_expired(self):
+        pass
+
+    @abstractmethod
+    def create_writer(self, name, camera_config, probe, error_queue) -> Writer:
+        pass
