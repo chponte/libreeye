@@ -1,4 +1,5 @@
 # Libreeye
 
-[![Build Status](https://travis-ci.org/chponte/libreeye.svg?branch=master)](https://travis-ci.org/chponte/libreeye)
-[![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/chponte/libreeye)](https://hub.docker.com/r/chponte/libreeye)
+[![Build Status](https://travis-ci.org/chponte/libreeye.svg?branch=dev)](https://travis-ci.org/chponte/libreeye)
+[![License](https://img.shields.io/github/license/chponte/libreeye)](https://github.com/chponte/libreeye/blob/dev-docs/README.md)
+[![Docs Status](https://readthedocs.org/projects/libreeye/badge/?version=dev-docs)](https://libreeye.readthedocs.io/en/dev-docs/)
