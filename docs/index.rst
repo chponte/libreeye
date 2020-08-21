@@ -1,20 +1,29 @@
-.. libreeye documentation master file, created by
-   sphinx-quickstart on Thu Aug 20 19:00:59 2020.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Libreeye: open source surveillance
+=========================================
 
-Welcome to libreeye's documentation!
-====================================
+
+Installing and configuring Libreeye
+-------------------------------------------
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :hidden:
+   :caption: First steps
 
+   /install/installation
+   /install/configuration
+   /install/upgrading
 
+The Libreeye project
+-------------------------------------------
 
-Indices and tables
-==================
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: About Libreeye
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   /project/roadmap
+   /project/issues
+   /project/report
+   /project/contributing
+   /project/license
