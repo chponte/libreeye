@@ -6,3 +6,6 @@ Installing on Fedora using dnf
 
 Building from source
 --------------------------------------------
+
+Upgrading
+--------------------------------------------
