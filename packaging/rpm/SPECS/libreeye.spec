@@ -55,8 +55,8 @@ mkdir -p %{buildroot}/var/log/libreeye
 %{_bindir}/libreeye
 %{_bindir}/libreeyed
 /usr/lib/systemd/system/libreeye.service
-%attr(-, root, libreeye) /etc/libreeye/libreeye.conf
-%attr(-, root, libreeye) /etc/libreeye/storage.conf
-%attr(-, root, libreeye) /etc/libreeye/cameras.d
-%attr(750, root, libreeye) /etc/libreeye/secrets
-%attr(775, root, libreeye) /var/log/libreeye
+%config(noreplace) %attr(-, root, libreeye) /etc/libreeye/libreeye.conf
+%config(noreplace) %attr(-, root, libreeye) /etc/libreeye/storage.conf
+%config(noreplace) %attr(-, root, libreeye) /etc/libreeye/cameras.d
+%config(noreplace) %attr(750, root, libreeye) /etc/libreeye/secrets
+%ghost %attr(775, root, libreeye) /var/log/libreeye

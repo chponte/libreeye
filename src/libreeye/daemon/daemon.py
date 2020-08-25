@@ -138,7 +138,7 @@ class Daemon():
         _logger.debug('_clean_storage_and_schedule called')
         threading.Thread(target=thread_body).start()
 
-    def start_camera(self, name):
+    def start_camera(self, name, wait=False):
         _logger.debug('start_camera called on %s', name)
         state = self._cameras[name]
         # Check if the recorder for the camera is already running
@@ -147,7 +147,7 @@ class Daemon():
         # Start camera process
         conf = self._conf.cameras()[name]
         camera = Camera(name, conf, self._storage)
-        camera.start()
+        camera.start(wait=wait)
         state['camera'] = camera
         state['running'] = True
 
@@ -185,7 +185,7 @@ class Daemon():
         _logger.debug('run called')
         # Start all cameras
         for c in self._conf.cameras():
-            self.start_camera(c)
+            self.start_camera(c, wait=True)
         # Listen for requests through the socket
         server = _ThreadingUnixServer(
             definitions.socket_path,
