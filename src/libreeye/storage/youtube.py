@@ -19,6 +19,7 @@ import grp
 import json
 import logging
 import os
+import pprint
 import pwd
 import stat
 import threading
@@ -82,7 +83,10 @@ class YoutubeStorage(Storage):
         expired = []
         credentials = self._build_credentials()
         youtube = googleapiclient.discovery.build(
-            _api_service_name, _api_version, credentials=credentials)
+            _api_service_name,
+            _api_version,
+            credentials=credentials,
+            cache_discovery=False)
         more_pages = True
         page_token = None
         due_date = datetime.utcnow() - timedelta(days=self._expiration)
@@ -149,6 +153,7 @@ class YoutubeWriter(Writer):
         self._segment_start = 0
 
     def _init_stream(self):
+        _logger.debug('_init_stream called')
         retry = True
         while retry:
             try:
@@ -163,6 +168,7 @@ class YoutubeWriter(Writer):
         self._thread = None
 
     def _swap_streams(self):
+        _logger.debug('_swap_streams called')
         retry = True
         while retry:
             try:
@@ -179,14 +185,19 @@ class YoutubeWriter(Writer):
         self._thread = None
 
     def _fix_stream(self):
+        _logger.debug('_fix_stream called')
         if self._ffmpeg is not None:
             self._ffmpeg.kill()
             self._ffmpeg = None
         self._ffmpeg_open()
 
     def _create_broadcast(self):
+        _logger.debug('_create_broadcast called')
         youtube = googleapiclient.discovery.build(
-            _api_service_name, _api_version, credentials=self._credentials)
+            _api_service_name,
+            _api_version,
+            credentials=self._credentials,
+            cache_discovery=False)
         if (self._bc is None or
             self._bc['status']['lifeCycleStatus'] in
                 ['complete', 'revoked']):
@@ -226,10 +237,20 @@ class YoutubeWriter(Writer):
                 part='snippet,status,contentDetails',
                 streamId=self._ls['id']
             ).execute()
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug('new broadcast information:\n%s',
+                          pprint.pformat(self._bc, indent=4))
 
     def _end_broadcast(self):
+        _logger.debug('_end_broadcast called')
         youtube = googleapiclient.discovery.build(
-            _api_service_name, _api_version, credentials=self._credentials)
+            _api_service_name,
+            _api_version,
+            credentials=self._credentials,
+            cache_discovery=False)
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug('ending broadcast:\n%s',
+                          pprint.pformat(self._bc, indent=4))
         if (self._bc is not None and
             self._bc['status']['lifeCycleStatus'] not in
                 ['complete', 'revoked']):

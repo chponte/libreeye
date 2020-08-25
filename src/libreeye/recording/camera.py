@@ -17,6 +17,8 @@
 # TODO:
 # - Multiple stream handling (video + audio)
 # - Add watermark when enabled in configuration
+# - Program blocks when camera start with wait returns any error while being
+#   reachable
 
 from typing import List
 import errno
@@ -138,11 +140,24 @@ class Camera:
         return frame_iter, thread
 
     def _interrupt(self, signum, _):
+        _logger.debug('_interrupt called')
         self._active = False
 
-    def start(self):
+    def start(self, wait=False):
+        _logger.debug('start called with wait=%s', wait)
+        c = threading.Condition()
+
+        def _handler(signum, _):
+            with c:
+                c.notify_all()
         self._process = multiprocessing.Process(target=self.run)
+        if wait:
+            signal.signal(signal.SIGUSR1, _handler)
         self._process.start()
+        if wait:
+            with c:
+                c.wait()
+            _logger.debug('start wait completed')
 
     def run(self):
         self._configure_logger()
@@ -166,6 +181,8 @@ class Camera:
         while self._active:
             # Start FFmpeg input stream
             process = self._create_ffmpeg()
+            # Notify parent process that camera has started
+            os.kill(multiprocessing.parent_process().pid, signal.SIGUSR1)
             # Read loop
             while self._active and process.poll() is None:
                 # Check for exceptions
